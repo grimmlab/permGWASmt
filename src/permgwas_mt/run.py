@@ -58,6 +58,11 @@ def parse_args():
     args = parser.parse_args()
     return vars(args)
 
+# TODO Wald correction
+# TODO A_cov, A_null, A_alt
+# TODO dytpe/precision
+
+
 
 def main():
     print('Start parsing arguments')
