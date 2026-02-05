@@ -1,22 +1,24 @@
 import torch
+import gc
+from tqdm import tqdm
 import scipy.stats as stats
 import numpy as np
 
 
 class BivariateGWAS:
 
-    def __init__(self, Y: torch.Tensor, K: torch.Tensor, Z: torch.Tensor, A_cov: torch.Tensor,
+    def __init__(self, Y: torch.Tensor, Ut: torch.Tensor, eigenvals: torch.Tensor, Z: torch.Tensor, A_cov: torch.Tensor,
                  device: str, dtype=torch.float32):
         self.device = torch.device(device)
         self.dtype = dtype
         self.n_samples = Y.shape[0]
-        # spectral decomposition
-        self.eigenvals, self.Ut = self._spectral_decomp(K=K)
+        # eigenvalues and transposed vectors from kinship spectral decomposition
+        self.eigenvals = eigenvals.to(device=self.device, dtype=self.dtype)
+        self.Ut = Ut.to(device=self.device, dtype=self.dtype)
         # transform y and fixed effects
-        self.y = self._transform_phenotype(Y=Y)
-        self.Z_raw = Z.to(device=self.device, dtype=self.dtype)
-        self.A_cov = A_cov.to(device=self.device, dtype=self.dtype)
-        self.X_batch, self.n_fixed = self._transform_covariates(Z=self.Z_raw, A_cov=self.A_cov)
+        self.y = self._transform_phenotype(Y=Y.to(device=self.device, dtype=self.dtype))
+        self.X_batch, self.n_fixed = self._transform_covariates(Z=Z.to(device=self.device, dtype=self.dtype),
+                                                                A_cov=A_cov.to(device=self.device, dtype=self.dtype))
         # initialize Cholesky factors
         self.l_G = torch.zeros(3, device=self.device, dtype=self.dtype, requires_grad=True)
         self.l_R = torch.zeros(3, device=self.device, dtype=self.dtype, requires_grad=True)
@@ -27,15 +29,7 @@ class BivariateGWAS:
         self.XV_null = None
         self.XVX_null = None
 
-    def _spectral_decomp(self, K: torch.Tensor):
-        """
-        Compute spectral decomposition of kinship matrix K=UDU^T
-
-        :param K:
-        :return: eigenvalues and U^T
-        """
-        eigenvals, U = torch.linalg.eigh(K.to(device=self.device, dtype=torch.float64))
-        return eigenvals.to(self.dtype), U.t().to(self.dtype)
+        self._clear_vram()
 
     def _transform_phenotype(self, Y: torch.Tensor):
         """
@@ -44,7 +38,7 @@ class BivariateGWAS:
         :param Y:
         :return:
         """
-        y = torch.mm(self.Ut, Y.to(device=self.device, dtype=self.dtype))
+        y = torch.mm(self.Ut, Y)
         return y.unsqueeze(-1)
 
     def _transform_covariates(self, Z: torch.Tensor, A_cov: torch.Tensor):
@@ -148,6 +142,14 @@ class BivariateGWAS:
         s2e = s2g * delta
         return s2g, s2e
 
+    def _clear_vram(self):
+        """
+        Cleanup for PyTorch caching allocator
+        """
+        gc.collect()
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+
     @staticmethod
     def vec_to_sym_matrix(l: torch.Tensor):
         """
@@ -209,6 +211,7 @@ class BivariateGWAS:
         if save_intermediate:
             self.XVX_null = torch.linalg.inv(XVX)
             self.XV_null = XV.transpose(1, 2)  # (n,c,2)
+        self._clear_vram()
 
     def _get_wald_chi(self, g_trans: torch.Tensor, A_snp: torch.Tensor):
         """
@@ -247,28 +250,23 @@ class BivariateGWAS:
         chi_sq = torch.bmm(gVres.unsqueeze(1), beta_snp).flatten()
         return chi_sq, beta_snp
 
-    def gwas_scan(self, genotypes: torch.Tensor, A_alt: torch.Tensor = None, A_null: torch.Tensor = None):
+    def gwas_scan(self, g_batch: torch.Tensor, A_alt: torch.Tensor, A_null: torch.Tensor = None):
         """
         Performs Bivariate GWAS Scan using the F-test
 
-        :param genotypes: batch of SNPs (n, num_snps)
+        :param g_batch: batch of SNPs (n, num_snps)
         :param A_alt: design matrix for alternative model
         :param A_null: design matrix for null model
         :return:test statistics, p-values, betas
         """
-        if A_alt is None:
-            A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
-        else:
-            A_alt = A_alt.to(device=self.device, dtype=self.dtype)
-
         with torch.no_grad():
-            g_trans = torch.mm(self.Ut, genotypes.to(device=self.device, dtype=self.dtype))
-            chi_alt, beta_alt = self._get_wald_chi(g_trans=g_trans, A_snp=A_alt)
+            g_batch = torch.mm(self.Ut, g_batch)
+            chi_alt, beta_alt = self._get_wald_chi(g_trans=g_batch, A_snp=A_alt)
 
             # if A_null is different from zero, compute null model and difference of chi-squared
             if A_null is not None:
                 A_null = A_null.to(device=self.device, dtype=self.dtype)
-                chi_null, _ = self._get_wald_chi(g_trans=g_trans, A_snp=A_null)
+                chi_null, _ = self._get_wald_chi(g_trans=g_batch, A_snp=A_null)
                 delta_chi = torch.clamp(chi_alt - chi_null, min=0.0)
                 df1 = float(A_alt.shape[1] - A_null.shape[1])
             else:
@@ -280,52 +278,52 @@ class BivariateGWAS:
             df2 = (2 * self.n_samples) - self.n_fixed - A_alt.shape[1]
             p_vals = stats.f.sf(f_stat.cpu().numpy(), df1, df2)
             betas = beta_alt.squeeze(-1).cpu().numpy()
+        return f_stat.cpu().numpy(), p_vals, betas
 
-            return f_stat.cpu().numpy(), p_vals, betas
-
-    def run_full_gwas_scan(self, genotypes: torch.Tensor, batch_size: int, A_null: torch.Tensor = None,
+    def run_full_gwas_scan(self, genotype_data, batch_size: int, n_snps: int, A_null: torch.Tensor = None,
                            A_alt: torch.Tensor = None):
 
-        n_snps = genotypes.shape[1]
+        if A_alt is None:
+            A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
+        else:
+            A_alt = A_alt.to(device=self.device, dtype=self.dtype)
         all_f, all_p, all_betas = [], [], []
-        # TODO load genotypes in batches from file??
-        for i in range(0, n_snps, batch_size):
-            g_batch = genotypes[:, i:i + batch_size]
-            test_stat, p_vals, betas = self.gwas_scan(genotypes=g_batch, A_alt=A_alt, A_null=A_null)
-            all_f.append(test_stat)
+
+        # check if genotypes is tensor or generator
+        is_tensor = isinstance(genotype_data, torch.Tensor)
+        if is_tensor:
+            n_snps = genotype_data.shape[1]
+            iterable = range(0, n_snps, batch_size)
+        else:
+            iterable = genotype_data
+        n_batches = int(np.ceil(n_snps / batch_size))
+        pbar = tqdm(iterable, total=n_batches)
+
+        for entry in pbar:
+            if is_tensor:
+                g_batch = genotype_data[:, entry : entry + batch_size].to(device=self.device, dtype=self.dtype)
+            else:
+                g_batch = entry.to(device=self.device, dtype=self.dtype, non_blocking=True)
+            test_stats, p_vals, betas = self.gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
+            all_f.append(test_stats)
             all_p.append(p_vals)
             all_betas.append(betas)
 
+            del g_batch, test_stats, p_vals, betas
+            self._clear_vram()
+
         return np.concatenate(all_f), np.concatenate(all_p), np.concatenate(all_betas)
 
-    def get_metrics(self):
-        """
-        Calculate heritability for both traits and genetic correlation between traits
 
-        :return: h2_1, h2_2, rg
-        """
-        G = self.vec_to_sym_matrix(self.l_G)
-        R = self.vec_to_sym_matrix(self.l_R)
-        h2 = [G[i,i] / (G[i,i] + R[i,i]) for i in range(2)]
-        rg = G[0,1] / torch.sqrt(G[0,0] * G[1,1])
-        return h2, rg
 
-    def reset(self, y_new: torch.Tensor=None, Z_new: torch.Tensor=None, A_new: torch.Tensor=None):
-        """
-        Resets parameters and allows changing the phenotypes, covariates and design matrix
 
-        :return:
-        """
-        # TODO use this to change trait design matrix A_cov or to change phenotypes or if optimization stuck
-        if A_new is not None:
-            self.A_cov = A_new.to(self.device)
-        if Z_new is not None:
-            self.Z_raw = Z_new.to(self.device)
-        if Z_new is not None or A_new is not None:
-            self.X_batch, self.n_fixed = self._transform_covariates(Z=self.Z_raw, A_cov=self.A_cov)
-        if y_new is not None:
-            self.y = self._transform_phenotype(Y=y_new)
 
-        self._initialize_params()
-        self.beta_null = None
-        self.V_inv_null = None
+
+
+
+
+
+
+
+
+

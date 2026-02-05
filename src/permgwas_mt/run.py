@@ -61,6 +61,7 @@ def parse_args():
 # TODO Wald correction
 # TODO A_cov, A_null, A_alt
 # TODO dytpe/precision
+# TODO clean up data_loader - dtype & gpu
 
 
 
