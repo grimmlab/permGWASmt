@@ -25,9 +25,10 @@ class BivariateGWAS:
         self._initialize_params()
         # initialize remaining variables
         self.beta_null = None
-        self.V_inv_null = None
-        self.XV_null = None
-        self.XVX_null = None
+        self.V_inv_null = None  # (n,4)
+        self.XV_null = None  # (n,2*c)
+        self.XVX_null = None  # (c,c)
+        self.Vres = None  # (n,2)
 
         self._clear_vram()
 
@@ -191,7 +192,7 @@ class BivariateGWAS:
         logdet_XVX = torch.logdet(XVX)
         resVres = torch.bmm(res.transpose(1,2), torch.bmm(V_inv, res)).sum()
 
-        return 0.5 * (logdet_V + logdet_XVX + resVres), beta_hat, V_inv, XV, XVX
+        return 0.5 * (logdet_V + logdet_XVX + resVres), beta_hat, V_inv, XV, XVX, res
 
     def fit_null_model(self, save_intermediate=True):
         """
@@ -201,46 +202,45 @@ class BivariateGWAS:
         optimizer = torch.optim.LBFGS([self.l_G, self.l_R], lr=0.05, max_iter=100)
         def closure():
             optimizer.zero_grad()
-            loss, _, _, _, _ = self.reml_loss()
+            loss, _, _, _, _, _ = self.reml_loss()
             loss.backward()
             return loss
         optimizer.step(closure)
 
-        _, self.beta_null, self.V_inv_null, XV, XVX = self.reml_loss()
+        _, self.beta_null, V_inv_null, XV, XVX, res = self.reml_loss()
 
+        # precalculate and store constants for all future scans
+        # weighted residuals under null V^-1 * res with V_inv_null: (n,2,2), res: (n,2,1)
+        self.Vres = torch.bmm(V_inv_null, res).squeeze(-1)  # (n,2)
+        # flat inverse variance
+        self.V_inv_null = V_inv_null.reshape(self.n_samples, 4)  # (n,4)
         if save_intermediate:
+            # compute (X^T * V^-1 * X)^-1 and (X^TV^-1)^T for null model
             self.XVX_null = torch.linalg.inv(XVX)
-            self.XV_null = XV.transpose(1, 2)  # (n,c,2)
+            self.XV_null = XV.transpose(1, 2).reshape(self.n_samples, -1)  # (n,2*c)
+
+        del V_inv_null, XV, XVX, res
         self._clear_vram()
 
-    def _get_wald_chi(self, g_trans: torch.Tensor, A_snp: torch.Tensor):
+    def _get_wald_chi(self, g_batch: torch.Tensor, A_snp: torch.Tensor):
         """
         Internal helper for Wald Chi-Square calculation:
 
-        :param g_trans: (n_samples, n_snps), transformed genotypes
+        :param g_batch: (n_samples, n_snps), transformed genotypes
         :param A_snp: (2, k) SNP design matrix
         :return:
         """
-        # residuals under null hypothesis: (n,2,1)
-        # beta_null: (c,1), X_batch: (n,2,c)
-        res_null = self.y - torch.bmm(self.X_batch, self.beta_null.expand(self.n_samples, -1, -1))
-
-        # weighted residuals V^-1 * res: (n,2)
-        # V_inv_null: (n,2,2)
-        Vres = torch.bmm(self.V_inv_null, res_null).squeeze(-1)
-
         # base score: g^T * V^-1 * res (n_snps,2) and project with A_snp
-        gVres = torch.mm(torch.mm(g_trans.t(), Vres), A_snp)  # (n_snps, k)
+        gVres = torch.mm(torch.mm(g_batch.t(), self.Vres), A_snp)  # (n_snps, k)
 
         # compute g^T * V^-1 * g^T (n_snps,2,2) and project it with A_snp
-        g_sq = g_trans.pow(2).t()
-        gVg = torch.mm(g_sq, self.V_inv_null.reshape(self.n_samples, 4)).reshape(-1, 2, 2)
+        gVg = torch.mm(g_batch.pow(2).t(), self.V_inv_null).reshape(-1, 2, 2)
 
         if self.XVX_null is not None:
-            n_snps = g_trans.shape[1]
+            n_snps = g_batch.shape[1]
             # gXV (n_snps,c,2)
-            gXV = torch.mm(g_trans.t(), self.XV_null.reshape(self.n_samples, -1)).reshape(n_snps, self.n_fixed, 2)
-            correction = torch.matmul(torch.matmul(gXV.transpose(1, 2), self.XVX_null), gXV)
+            correction = torch.mm(g_batch.t(), self.XV_null).reshape(n_snps, self.n_fixed, 2)
+            correction = torch.matmul(torch.matmul(correction.transpose(1, 2), self.XVX_null), correction)
             gVg = gVg - correction
 
         gVg = torch.matmul(A_snp.t(), torch.matmul(gVg, A_snp))  # (n_snps,k,k)
@@ -259,29 +259,55 @@ class BivariateGWAS:
         :param A_null: design matrix for null model
         :return:test statistics, p-values, betas
         """
-        with torch.no_grad():
-            g_batch = torch.mm(self.Ut, g_batch)
-            chi_alt, beta_alt = self._get_wald_chi(g_trans=g_batch, A_snp=A_alt)
 
-            # if A_null is different from zero, compute null model and difference of chi-squared
-            if A_null is not None:
-                A_null = A_null.to(device=self.device, dtype=self.dtype)
-                chi_null, _ = self._get_wald_chi(g_trans=g_batch, A_snp=A_null)
-                delta_chi = torch.clamp(chi_alt - chi_null, min=0.0)
-                df1 = float(A_alt.shape[1] - A_null.shape[1])
-            else:
-                delta_chi = chi_alt
-                df1 = float(A_alt.shape[1])
+        g_batch = torch.mm(self.Ut, g_batch)
+        chi_alt, beta_alt = self._get_wald_chi(g_batch=g_batch, A_snp=A_alt)
 
-            # compute F-statistic
-            f_stat = delta_chi / df1
-            df2 = (2 * self.n_samples) - self.n_fixed - A_alt.shape[1]
-            p_vals = stats.f.sf(f_stat.cpu().numpy(), df1, df2)
-            betas = beta_alt.squeeze(-1).cpu().numpy()
+        # if A_null is different from zero, compute null model and difference of chi-squared
+        if A_null is not None:
+            A_null = A_null.to(device=self.device, dtype=self.dtype)
+            chi_null, _ = self._get_wald_chi(g_batch=g_batch, A_snp=A_null)
+            delta_chi = torch.clamp(chi_alt - chi_null, min=0.0)
+            df1 = float(A_alt.shape[1] - A_null.shape[1])
+        else:
+            delta_chi = chi_alt
+            df1 = float(A_alt.shape[1])
+
+        # compute F-statistic
+        f_stat = delta_chi / df1
+        df2 = (2 * self.n_samples) - self.n_fixed - A_alt.shape[1]
+        p_vals = stats.f.sf(f_stat.cpu().numpy(), df1, df2)
+        betas = beta_alt.squeeze(-1).cpu().numpy()
         return f_stat.cpu().numpy(), p_vals, betas
+
+    @staticmethod
+    def _check_genotypes(genotype_data, n_snps, batch_size):
+        """
+        check if genotypes are tensor or generator, set up iterable batches
+        :return:
+        """
+        is_tensor = isinstance(genotype_data, torch.Tensor)
+        if is_tensor:
+            n_snps = genotype_data.shape[1]
+            iterable = range(0, n_snps, batch_size)
+        else:
+            iterable = genotype_data
+        n_batches = int(np.ceil(n_snps / batch_size))
+        return is_tensor, iterable, n_batches
 
     def run_full_gwas_scan(self, genotype_data, batch_size: int, n_snps: int, A_null: torch.Tensor = None,
                            A_alt: torch.Tensor = None):
+        """
+        Run full GWAS scan over batches of SNPs. Accept genotype_data as a tensor containing full SNP matrix or
+        as a generator, loading SNPs batch-wise from file.
+
+        :param genotype_data:
+        :param batch_size:
+        :param n_snps:
+        :param A_null:
+        :param A_alt:
+        :return:
+        """
 
         if A_alt is None:
             A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
@@ -290,27 +316,22 @@ class BivariateGWAS:
         all_f, all_p, all_betas = [], [], []
 
         # check if genotypes is tensor or generator
-        is_tensor = isinstance(genotype_data, torch.Tensor)
-        if is_tensor:
-            n_snps = genotype_data.shape[1]
-            iterable = range(0, n_snps, batch_size)
-        else:
-            iterable = genotype_data
-        n_batches = int(np.ceil(n_snps / batch_size))
+        is_tensor, iterable, n_batches = self._check_genotypes(genotype_data, n_snps, batch_size)
         pbar = tqdm(iterable, total=n_batches)
 
-        for entry in pbar:
-            if is_tensor:
-                g_batch = genotype_data[:, entry : entry + batch_size].to(device=self.device, dtype=self.dtype)
-            else:
-                g_batch = entry.to(device=self.device, dtype=self.dtype, non_blocking=True)
-            test_stats, p_vals, betas = self.gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
-            all_f.append(test_stats)
-            all_p.append(p_vals)
-            all_betas.append(betas)
+        with torch.no_grad():
+            for entry in pbar:
+                if is_tensor:
+                    g_batch = genotype_data[:, entry : entry + batch_size].to(device=self.device, dtype=self.dtype)
+                else:
+                    g_batch = entry.to(device=self.device, dtype=self.dtype, non_blocking=True)
+                test_stats, p_vals, betas = self.gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
+                all_f.append(test_stats)
+                all_p.append(p_vals)
+                all_betas.append(betas)
 
-            del g_batch, test_stats, p_vals, betas
-            self._clear_vram()
+                del g_batch, test_stats, p_vals, betas
+                self._clear_vram()
 
         return np.concatenate(all_f), np.concatenate(all_p), np.concatenate(all_betas)
 

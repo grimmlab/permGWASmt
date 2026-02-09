@@ -36,6 +36,8 @@ def run(config:InputConfig):
         eigenvals, U = torch.linalg.eigh(K.to(device=self.device, dtype=torch.float64))
         return eigenvals, U.t()
 
+    # TODO get A from helper function
+
     solver = BivariateGWAS(Y=dataset.y, K=dataset.K, Z=dataset.fixed,  A_cov=A_cov, device=config.device)
 
     print("Fitting Null Model (REML)...")
