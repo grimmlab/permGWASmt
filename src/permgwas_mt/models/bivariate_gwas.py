@@ -222,35 +222,7 @@ class BivariateGWAS:
         del V_inv_null, XV, XVX, res
         self._clear_vram()
 
-    def _get_wald_chi(self, g_batch: torch.Tensor, A_snp: torch.Tensor):
-        """
-        Internal helper for Wald Chi-Square calculation:
-
-        :param g_batch: (n_samples, n_snps), transformed genotypes
-        :param A_snp: (2, k) SNP design matrix
-        :return:
-        """
-        # base score: g^T * V^-1 * res (n_snps,2) and project with A_snp
-        gVres = torch.mm(torch.mm(g_batch.t(), self.Vres), A_snp)  # (n_snps, k)
-
-        # compute g^T * V^-1 * g^T (n_snps,2,2) and project it with A_snp
-        gVg = torch.mm(g_batch.pow(2).t(), self.V_inv_null).reshape(-1, 2, 2)
-
-        if self.XVX_null is not None:
-            n_snps = g_batch.shape[1]
-            # gXV (n_snps,c,2)
-            correction = torch.mm(g_batch.t(), self.XV_null).reshape(n_snps, self.n_fixed, 2)
-            correction = torch.matmul(torch.matmul(correction.transpose(1, 2), self.XVX_null), correction)
-            gVg = gVg - correction
-
-        gVg = torch.matmul(A_snp.t(), torch.matmul(gVg, A_snp))  # (n_snps,k,k)
-
-        # Wald Chi-Square: (gVres)^T * (gVg)^-1 * gVres (n_snps,)
-        beta_snp = torch.linalg.solve(gVg, gVres.unsqueeze(-1))  # (n_snps,k,1)
-        chi_sq = torch.bmm(gVres.unsqueeze(1), beta_snp).flatten()
-        return chi_sq, beta_snp
-
-    def gwas_scan(self, g_batch: torch.Tensor, A_alt: torch.Tensor, A_null: torch.Tensor = None):
+    def _gwas_scan(self, g_batch: torch.Tensor, A_alt: torch.Tensor, A_null: torch.Tensor = None):
         """
         Performs Bivariate GWAS Scan using the F-test
 
@@ -260,25 +232,48 @@ class BivariateGWAS:
         :return:test statistics, p-values, betas
         """
 
-        g_batch = torch.mm(self.Ut, g_batch)
-        chi_alt, beta_alt = self._get_wald_chi(g_batch=g_batch, A_snp=A_alt)
+        # base score: g^T * V^-1 * res and base information matrix g^T * V^-1 * g^T
+        gVres = torch.mm(g_batch.t(), self.Vres)  # (n_snps, 2)
+        gVg = torch.mm(g_batch.pow(2).t(), self.V_inv_null).reshape(-1, 2, 2)  # (n_snps,2,2)
 
-        # if A_null is different from zero, compute null model and difference of chi-squared
+        # correct for full Wald test
+        if self.XVX_null is not None:
+            # gXV (n_snps,c,2)
+            gXV = torch.mm(g_batch.t(), self.XV_null).reshape(-1, self.n_fixed, 2)
+            gVg -= torch.matmul(torch.matmul(gXV.transpose(1, 2), self.XVX_null), gXV)
+            del gXV
+        del g_batch
+
+        # project to null space and compute Wald Chi-square: (gVres)^T * (gVg)^-1 * gVres
         if A_null is not None:
-            A_null = A_null.to(device=self.device, dtype=self.dtype)
-            chi_null, _ = self._get_wald_chi(g_batch=g_batch, A_snp=A_null)
-            delta_chi = torch.clamp(chi_alt - chi_null, min=0.0)
+            gVres_null = torch.matmul(gVres, A_null)
+            gVg_null = torch.matmul(A_null.t(), torch.matmul(gVg, A_null))
+            chi_null = torch.bmm(gVres_null.unsqueeze(1),
+                                 torch.linalg.solve(gVg_null, gVres_null.unsqueeze(-1))).flatten()  # (n_snps,)
+            del gVres_null, gVg_null
+        else:
+            chi_null = None
+
+        # project to alternative space and compute Wald Chi-square: (gVres)^T * (gVg)^-1 * gVres
+        gVres = torch.matmul(gVres, A_alt)
+        gVg = torch.matmul(A_alt.t(), torch.matmul(gVg, A_alt))
+        beta_alt = torch.linalg.solve(gVg, gVres.unsqueeze(-1))  # (n_snps,k,1)
+        chi_alt = torch.bmm(gVres.unsqueeze(1), beta_alt).flatten()  # (n_snps,)
+        del gVres, gVg
+
+        if chi_null is not None:
+            f_stat = torch.clamp(chi_alt - chi_null, min=0.0)
             df1 = float(A_alt.shape[1] - A_null.shape[1])
         else:
-            delta_chi = chi_alt
+            f_stat = chi_null
             df1 = float(A_alt.shape[1])
 
         # compute F-statistic
-        f_stat = delta_chi / df1
+        f_stat = f_stat / df1
+        f_stat = f_stat.cpu().numpy()
         df2 = (2 * self.n_samples) - self.n_fixed - A_alt.shape[1]
-        p_vals = stats.f.sf(f_stat.cpu().numpy(), df1, df2)
-        betas = beta_alt.squeeze(-1).cpu().numpy()
-        return f_stat.cpu().numpy(), p_vals, betas
+        p_vals = stats.f.sf(f_stat, df1, df2)
+        return f_stat, p_vals, beta_alt.squeeze(-1).cpu().numpy()
 
     @staticmethod
     def _check_genotypes(genotype_data, n_snps, batch_size):
@@ -313,6 +308,8 @@ class BivariateGWAS:
             A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
         else:
             A_alt = A_alt.to(device=self.device, dtype=self.dtype)
+        if A_null is not None:
+            A_null = A_null.to(device=self.device, dtype=self.dtype)
         all_f, all_p, all_betas = [], [], []
 
         # check if genotypes is tensor or generator
@@ -325,26 +322,120 @@ class BivariateGWAS:
                     g_batch = genotype_data[:, entry : entry + batch_size].to(device=self.device, dtype=self.dtype)
                 else:
                     g_batch = entry.to(device=self.device, dtype=self.dtype, non_blocking=True)
-                test_stats, p_vals, betas = self.gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
+                g_batch = torch.mm(self.Ut, g_batch)
+                test_stats, p_vals, betas = self._gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
                 all_f.append(test_stats)
                 all_p.append(p_vals)
                 all_betas.append(betas)
 
-                del g_batch, test_stats, p_vals, betas
                 self._clear_vram()
 
         return np.concatenate(all_f), np.concatenate(all_p), np.concatenate(all_betas)
 
+    def _permutation_scan(self, g_batch: torch.Tensor, seeds: np.array, A_alt: torch.Tensor,
+                          A_null: torch.Tensor = None):
+        """
+        Permutation GWAS scan over batch of SNPs and batch of permutations
+
+        :param g_batch:
+        :param seeds:
+        :param A_alt:
+        :param A_null:
+        :return:
+        """
+        n_perm = len(seeds)
+        n_snps = g_batch.shape[1]
+
+        # Set predefined seeds and generate local batch indices
+        idx = torch.stack([torch.manual_seed(int(s)) or torch.randperm(self.n_samples, device=self.device) for s in seeds])
+
+        # Get shuffled SNPs
+        g_perm = g_batch[idx, :]  # (p,n,m)
+
+        # Compute Score (B, M, 2) and Information (B, M, 2, 2)
+        gVres = torch.matmul(g_perm.transpose(1, 2), self.Vres)  # (p,m,2)
+        gVg = torch.matmul(g_perm.pow(2).transpose(1, 2),
+                         self.V_inv_null).reshape(n_perm, n_snps, 2, 2)  # (p,m,2,2)
+
+        # Confounding Correction
+        if self.XVX_null is not None:
+            gXV = torch.matmul(g_perm.transpose(1, 2),
+                               self.XV_null).reshape(n_perm, n_snps, -1, 2)  # (p,m,c,2)
+            gVg -= torch.matmul(gXV.transpose(-2, -1), torch.matmul(self.XVX_null, gXV))  # (p,m,2,2)
+            del gXV
+        del g_perm
+
+        # compute chi squared for specific null
+        if A_null is not None:
+            gVres_null = torch.matmul(gVres, A_null)
+            gVg_null = torch.matmul(A_null.t(), torch.matmul(gVg, A_null))
+            chi_null = torch.matmul(torch.matmul(gVres_null.unsqueeze(-2), torch.inverse(gVg_null)),
+                                    gVres_null.unsqueeze(-1)).squeeze(-1).squeeze(-1)
+            del gVres_null, gVg_null
+        else:
+            chi_null = None
+
+        # compute chi square for alternative
+        gVres = torch.matmul(gVres, A_alt)
+        gVg = torch.matmul(A_alt.t(), torch.matmul(gVg, A_alt))
+        chi_alt = torch.matmul(torch.matmul(gVres.unsqueeze(-2), torch.inverse(gVg)),
+                               gVres.unsqueeze(-1)).squeeze(-1).squeeze(-1)
+        del gVres, gVg
+
+        if chi_null is not None:
+            stat = torch.clamp(chi_alt - chi_null, min=0.0)
+            df1 = float(A_alt.shape[1] - A_null.shape[1])
+        else:
+            stat = chi_null
+            df1 = float(A_alt.shape[1])
+        # compute F-statistic
+        stat = stat / df1
+
+        # Return max across SNPs (dim=1)
+        return torch.max(stat, dim=1)[0]
 
 
+    def run_permutation_gwas(self, genotype_data, batch_size: int, n_snps: int, n_perms: int, perm_batch_size: int,
+                             A_null: torch.Tensor = None, A_alt: torch.Tensor = None, master_seed: int=142):
+        """
+        Compute Westfall & Young permutation-based threshold.
 
+        """
+        if A_alt is None:
+            A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
+        else:
+            A_alt = A_alt.to(device=self.device, dtype=self.dtype)
+        if A_null is not None:
+            A_null = A_null.to(device=self.device, dtype=self.dtype)
 
+        # get list of seeds for permutations
+        rng = np.random.default_rng(master_seed)
+        perm_seeds = rng.integers(low=0, high=2 ** 31, size=n_perms)
 
+        max_stats = torch.zeros(n_perms, device=self.device, dtype=self.dtype)
 
+        is_tensor, iterable, n_batches = self._check_genotypes(genotype_data, n_snps, batch_size)
+        pbar = tqdm(iterable, total=n_batches, desc="Permutation Scan")
 
+        with torch.no_grad():
+            for entry in pbar:
+                if is_tensor:
+                    g_batch = genotype_data[:, entry: entry + batch_size].to(device=self.device, dtype=self.dtype)
+                else:
+                    g_batch = entry.to(device=self.device, dtype=self.dtype, non_blocking=True)
+                g_batch = torch.mm(self.Ut, g_batch)
 
+                # go through perm sub-batches
+                for p_idx in range(0, n_perms, perm_batch_size):
+                    n_perm_batch = min(perm_batch_size, n_perms - p_idx)
+                    batch_seeds = perm_seeds[p_idx:p_idx + n_perm_batch]
+                    # get max test stats for current perm and SNP batch
+                    perm_batch_max = self._permutation_scan(g_batch=g_batch,seeds=batch_seeds,
+                                                            A_alt=A_alt, A_null=A_null)
+                    # update global max tensor
+                    max_stats[p_idx:p_idx + n_perm_batch] = torch.max(max_stats[p_idx:p_idx + n_perm_batch],
+                                                                      perm_batch_max)
+                del g_batch
+                self._clear_vram()
 
-
-
-
-
+        return max_stats.cpu().numpy(), perm_seeds
