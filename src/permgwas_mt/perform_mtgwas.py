@@ -9,6 +9,10 @@ from permgwas_mt.utils.get_time import Timer, timed
 import permgwas_mt.utils.helpers as helpers
 
 
+# TODO test on gpu
+# TODO move spectral_dec to data loader
+# TODO include and test full X vs. batchwise
+
 def spectral_decomp(K: torch.Tensor, device):
     """
     Compute spectral decomposition of kinship matrix K=UDU^T
@@ -16,11 +20,10 @@ def spectral_decomp(K: torch.Tensor, device):
     :param K:
     :return: eigenvalues and U^T
     """
-    # TODO move to data loader
     eigenvals, U = torch.linalg.eigh(K.to(device=device, dtype=torch.float64))
     return eigenvals, U.t()
 
-# TODO load full X vs. batchwise
+
 def run(input_config:InputConfig):
     device = torch.device(input_config.device)
     timer = Timer()
@@ -41,12 +44,10 @@ def run(input_config:InputConfig):
         solver.fit_null_model(full_wald=True)
     timer.log("Have null model.")
 
-    # TODO put in cli args
-    hypothesis_type = "any"
-    print(f"Start GWAS scan. Test for {hypothesis_type} effects.")
-    A_alt, A_null = helpers.get_bivariate_hypotheses(hypothesis_type)
 
-    # TODO test on gpu
+    print(f"Start GWAS scan. Test for {input_config.hypothesis_type} effects.")
+    A_alt, A_null = helpers.get_bivariate_hypotheses(input_config.hypothesis_type)
+
     with timed(timer, "gwas scan", use_cuda=(device.type == "cuda")):
         """f_stats, p_values, betas = solver.run_full_gwas_scan(genotype_data=dataset.X,
                                                              n_snps=dataset.n_snps,
@@ -63,12 +64,10 @@ def run(input_config:InputConfig):
                                                                  )
     timer.log("Have p-values.")
 
-    # TODO in cli args
-    master_seed = 142
+
     if input_config.n_permutations > 0:
         with timed(timer, "permutations", use_cuda=(device.type == "cuda")):
             print("Start permutations.")
-            # TODO test on gpu
             """max_stats, perm_seeds = solver.run_permutation_gwas(genotype_data=dataset.X,
                                                                 n_perms=input_config.n_permutations,
                                                                 n_snps=dataset.n_snps,
@@ -83,7 +82,7 @@ def run(input_config:InputConfig):
                                                             genotype_data=dataset.X,
                                                             n_perms=input_config.n_permutations,
                                                             n_snps=dataset.n_snps,
-                                                            master_seed=master_seed,
+                                                            master_seed=input_config.master_seed,
                                                             A_alt=A_alt,
                                                             A_null=A_null,
                                                             batch_size=5000,
@@ -112,9 +111,9 @@ def run(input_config:InputConfig):
                       maf_threshold=input_config.maf_threshold,
                       l_G=solver.l_G.detach().cpu().numpy().tolist(),
                       l_R=solver.l_R.detach().cpu().numpy().tolist(),
-                      hypothesis_type=hypothesis_type,
+                      hypothesis_type=input_config.hypothesis_type,
                       n_perm=input_config.n_permutations,
-                      master_seed=master_seed,
+                      master_seed=input_config.master_seed,
                       max_stats=max_stats,
                       kinship_file=input_config.kinship_file,
                       covariate_file=input_config.covariate_file,

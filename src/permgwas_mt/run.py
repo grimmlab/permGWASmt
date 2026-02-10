@@ -31,13 +31,13 @@ def parse_args():
                         help="Optional minor allele frequency threshold")
     parser.add_argument("-perm", "--n_permutations", type=int, default=None,
                         help="Number of permutations")
-    parser.add_argument("-perm_method", "--perm_method", type=str, default=None,
-                        help="Method to use for permutations (x or y). x: permute fixed effects matrix, "
-                             "y: permute phenotypes (default: x)")
     parser.add_argument("--outdir", type=str, default=None,
                         help="Output folder (default: ./results)")
     parser.add_argument("--outfile", type=str, default=None,
                         help="Result file name (default: pheno1_pheno2)")
+    parser.add_argument("--hypothesis_type", type=str, default=None,
+                        help="Optional hypothesis type. Valid options are 'any', 'common' and 'specific'. "
+                             "(default: 'any')")
 
     # Compute settings
     parser.add_argument("--device", type=str, default=None,
@@ -50,6 +50,8 @@ def parse_args():
                         help='Number of SNPs to work on simultaneously (default: 10000)')
     parser.add_argument('-batch_perm', '--perm_batch_size', type=int, default=None,
                         help='Number of SNPs to work on simultaneously for permutations (default: 1000)')
+    parser.add_argument('--master_seed', type=int, default=None,
+                        help='Master seed used for permutations (default: will be randomly generated)')
 
     # Config file
     parser.add_argument("--config", "--config_file", type=str, default=None,
@@ -58,12 +60,8 @@ def parse_args():
     args = parser.parse_args()
     return vars(args)
 
-# TODO Wald correction
-# TODO A_cov, A_null, A_alt
+# TODO A_cov,
 # TODO dytpe/precision
-# TODO clean up data_loader - dtype & gpu
-
-
 
 def main():
     print('Start parsing arguments')

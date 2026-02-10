@@ -1,6 +1,7 @@
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
+import numpy as np
 import pandas as pd
 from .result_types import ResultType
 from .file_types import (GenotypeFileType, PhenotypeFileType, CovariateFileType, KinshipFileType)
@@ -18,14 +19,15 @@ class InputConfig:
     outdir: Path | None = None
     outfile: str | None = None
 
+    hypothesis_type: str = "any"
     maf_threshold: int = 0
     n_permutations: int = 0
-    perm_method: str = "x"
 
     load_genotype: bool = False
     batch_size: int = 10000
     perm_batch_size: int = 1000
     device: str = "cpu"
+    master_seed: int | None = None
 
     genotype_type: GenotypeFileType = field(init=False)
     phenotype_type: PhenotypeFileType = field(init=False)
@@ -154,10 +156,12 @@ class InputConfig:
                     UserWarning,
                 )
 
-        # check permutations
-        if self.n_permutations > 0:
-            if self.perm_method not in ("x", "y"):
-                raise NotImplementedError(f"Permutation method {self.perm_method} not supported")
+        if self.hypothesis_type not in ("any", "common", "specific"):
+            raise ValueError(f"Unknown hypothesis test type: {self.hypothesis_type}")
+
+        if self.master_seed is None:
+            object.__setattr__(self, "master_seed", np.random.randint(0, 2**31 - 1))
+
 
     def _validate_phenotypes(self):
         if len(self.traits) != 2:

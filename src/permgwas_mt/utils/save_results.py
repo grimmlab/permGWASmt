@@ -55,7 +55,7 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
         "maf_threshold": maf_threshold,
         "hypothesis_type": hypothesis_type,
         "n_perm": n_perm,
-        "master_seed": master_seed,
+        "master_seed": int(master_seed),
         "variance_components": {
             "l_G": l_G,
             "l_R": l_R,

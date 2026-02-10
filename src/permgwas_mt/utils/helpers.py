@@ -22,7 +22,7 @@ def get_bivariate_hypotheses(test_type="any"):
         return A_any, None
     elif test_type == "common":
         return A_common, None
-    elif test_type == "pleiotropy":
+    elif test_type == "specific":
         # Tests if the 2-parameter model is better than the 1-parameter model
         return A_any, A_common
     else:
