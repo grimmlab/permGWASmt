@@ -217,8 +217,19 @@ class InputConfig:
         object.__setattr__(self, "outdir", outdir)
 
         # prepare output filename
-        if self.outfile is None:
-            object.__setattr__(self, "outfile", "_".join(self.traits))
+        tmp_file = self.outfile if self.outfile is not None else "_".join(self.traits)
+        out_path = self.outdir / f"p_values_{tmp_file}.csv"
+
+        if not out_path.exists():
+            object.__setattr__(self, "outfile", tmp_file)
+        else:
+            i = 1
+            while True:
+                candidate = self.outdir / f"p_values_{tmp_file}({i}).csv"
+                if not candidate.exists():
+                    object.__setattr__(self, "outfile", f"{tmp_file}({i})")
+                    break
+                i += 1
 
     def _validate_device(self):
         import torch
@@ -249,19 +260,10 @@ class InputConfig:
 
     def resolve_output_file(self, result_type:ResultType) -> Path:
         """
-        Return collision-free output file path for given ResultType
+        Return output file path for given ResultType
         :param result_type: ResultType of output file
         :return: output file path
         """
         base = f"{result_type.stem}_{self.outfile}"
         out_path = self.outdir / f"{base}{result_type.suffix}"
-
-        if not out_path.exists():
-            return out_path
-
-        i = 2
-        while True:
-            candidate = self.outdir / f"{base}({i}).{result_type.suffix}"
-            if not candidate.exists():
-                return candidate
-            i += 1
+        return out_path

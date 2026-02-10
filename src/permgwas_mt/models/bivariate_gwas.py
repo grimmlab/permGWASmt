@@ -194,10 +194,10 @@ class BivariateGWAS:
 
         return 0.5 * (logdet_V + logdet_XVX + resVres), beta_hat, V_inv, XV, XVX, res
 
-    def fit_null_model(self, save_intermediate=True):
+    def fit_null_model(self, full_wald=True):
         """
         optimize REML loss for null model, optionally save intermediate results X^TV^-1 and (X^TV^-1X)^-1
-        :param save_intermediate: boolean, whether to save intermediate results
+        :param full_wald: boolean, whether to save intermediate results for full Wald Chi square scan
         """
         optimizer = torch.optim.LBFGS([self.l_G, self.l_R], lr=0.05, max_iter=100)
         def closure():
@@ -214,7 +214,7 @@ class BivariateGWAS:
         self.Vres = torch.bmm(V_inv_null, res).squeeze(-1)  # (n,2)
         # flat inverse variance
         self.V_inv_null = V_inv_null.reshape(self.n_samples, 4)  # (n,4)
-        if save_intermediate:
+        if full_wald:
             # compute (X^T * V^-1 * X)^-1 and (X^TV^-1)^T for null model
             self.XVX_null = torch.linalg.inv(XVX)
             self.XV_null = XV.transpose(1, 2).reshape(self.n_samples, -1)  # (n,2*c)
@@ -265,7 +265,7 @@ class BivariateGWAS:
             f_stat = torch.clamp(chi_alt - chi_null, min=0.0)
             df1 = float(A_alt.shape[1] - A_null.shape[1])
         else:
-            f_stat = chi_null
+            f_stat = chi_alt
             df1 = float(A_alt.shape[1])
 
         # compute F-statistic
@@ -314,7 +314,7 @@ class BivariateGWAS:
 
         # check if genotypes is tensor or generator
         is_tensor, iterable, n_batches = self._check_genotypes(genotype_data, n_snps, batch_size)
-        pbar = tqdm(iterable, total=n_batches)
+        pbar = tqdm(iterable, total=n_batches, desc="GWAS Scan")
 
         with torch.no_grad():
             for entry in pbar:
@@ -347,10 +347,15 @@ class BivariateGWAS:
         n_snps = g_batch.shape[1]
 
         # Set predefined seeds and generate local batch indices
-        idx = torch.stack([torch.manual_seed(int(s)) or torch.randperm(self.n_samples, device=self.device) for s in seeds])
+        idx_list = []
+        for s in seeds:
+            torch.manual_seed(int(s))
+            idx_list.append(torch.randperm(self.n_samples, device=self.device))
+        idx_list = torch.stack(idx_list)
 
         # Get shuffled SNPs
-        g_perm = g_batch[idx, :]  # (p,n,m)
+        g_perm = g_batch[idx_list, :]  # (p,n,m)
+        del idx_list,
 
         # Compute Score (B, M, 2) and Information (B, M, 2, 2)
         gVres = torch.matmul(g_perm.transpose(1, 2), self.Vres)  # (p,m,2)
@@ -386,7 +391,7 @@ class BivariateGWAS:
             stat = torch.clamp(chi_alt - chi_null, min=0.0)
             df1 = float(A_alt.shape[1] - A_null.shape[1])
         else:
-            stat = chi_null
+            stat = chi_alt
             df1 = float(A_alt.shape[1])
         # compute F-statistic
         stat = stat / df1

@@ -9,7 +9,7 @@ covariate_file:
 covariate_list:
 perm_method: "x"
 maf_threshold: 0
-n_permutations: 0
+n_permutations: 100
 outdir:
 outfile:
 device: "cpu"

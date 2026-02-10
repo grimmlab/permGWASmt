@@ -100,6 +100,39 @@ class Genotype:
         self.n_samples = len(self.sample_ids)
         self.n_snps = len(self.positions)
 
+    # TODO need to change to work with bivariate gwas
+    """
+    def stream_genotypes(self, chunk_size=5000):
+
+    # A generator that reads from HDF5, filters samples/SNPs, 
+    # and yields CPU tensors.
+
+    with h5py.File(self.h5_path, 'r') as f:
+        genotype_ds = f['genotypes'] # Reference to dataset
+
+        for i in range(0, self.total_snps_on_disk, chunk_size):
+            end = min(i + chunk_size, self.total_snps_on_disk)
+
+            # 1. Load raw block (samples, batch_snps) from HDF5
+            # We use the sample_indices to filter rows at the disk-read level
+            raw_chunk = genotype_ds[self.sample_indices, i:end]
+
+            # 2. Apply SNP Filtering (MAF, missingness, etc.)
+            # The width of clean_chunk may be < chunk_size
+            clean_chunk = self.snp_qc_filter(raw_chunk)
+
+            # 3. Skip if all SNPs in this batch were filtered out
+            if clean_chunk.shape[1] == 0:
+                continue
+
+            # 4. Yield as CPU tensor
+            # The Solver will handle moving this to GPU
+            yield torch.from_numpy(clean_chunk).to(torch.float32)
+
+            # Explicitly cleanup local numpy refs
+            del raw_chunk, clean_chunk
+    """
+
     def load_genotype_batch_wise(self, device: str, save_meta: bool = True,
                                  snp_lower_index: int = None, snp_upper_index: int = None):
         """
@@ -111,40 +144,6 @@ class Genotype:
         :param snp_lower_index: lower bound of batch
         :param snp_upper_index: upper bound of batch
         """
-        # TODO need to change to work with bivariate gwas
-        """
-        def stream_genotypes(self, chunk_size=5000):
-        
-        # A generator that reads from HDF5, filters samples/SNPs, 
-        # and yields CPU tensors.
-        
-        with h5py.File(self.h5_path, 'r') as f:
-            genotype_ds = f['genotypes'] # Reference to dataset
-            
-            for i in range(0, self.total_snps_on_disk, chunk_size):
-                end = min(i + chunk_size, self.total_snps_on_disk)
-                
-                # 1. Load raw block (samples, batch_snps) from HDF5
-                # We use the sample_indices to filter rows at the disk-read level
-                raw_chunk = genotype_ds[self.sample_indices, i:end]
-                
-                # 2. Apply SNP Filtering (MAF, missingness, etc.)
-                # The width of clean_chunk may be < chunk_size
-                clean_chunk = self.snp_qc_filter(raw_chunk)
-                
-                # 3. Skip if all SNPs in this batch were filtered out
-                if clean_chunk.shape[1] == 0:
-                    continue
-                
-                # 4. Yield as CPU tensor
-                # The Solver will handle moving this to GPU
-                yield torch.from_numpy(clean_chunk).to(torch.float32)
-
-                # Explicitly cleanup local numpy refs
-                del raw_chunk, clean_chunk
-        """
-
-
         device = torch.device(device)
         self.X, chromosomes, positions = self.load_genotype_hdf5_file(snp_lower_index=snp_lower_index,
                                                                       snp_upper_index=snp_upper_index)
