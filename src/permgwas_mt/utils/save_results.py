@@ -35,12 +35,12 @@ def save_max_test_stats(filepath, max_test_stats, seeds):
     df = pd.DataFrame({'SEED': seeds,
                        'MAX_F_STAT': max_test_stats})
     df.to_csv(filepath, index=False)
-    print(f"Saved  maximal test statistics for {max_test_stats.shape[0]} permutations to {filepath}")
+    print(f"Saved max test statistics for {max_test_stats.shape[0]} permutations to {filepath}")
 
 
 def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples, n_snps, maf_threshold, l_G, l_R,
-                      hypothesis_type, n_perm, master_seed, max_stats=None, kinship_file=None, covariate_file=None,
-                      covariate_list=None):
+                      hypothesis_type, trait_design, n_perm, master_seed, perm_thres=None, kinship_file=None,
+                      covariate_file=None, covariate_list=None):
 
     #Saves a comprehensive summary of the GWAS run including
     #model parameters, hardware settings, and significance thresholds.
@@ -54,6 +54,7 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
         "n_snps": n_snps,
         "maf_threshold": maf_threshold,
         "hypothesis_type": hypothesis_type,
+        "trait_design": trait_design,
         "n_perm": n_perm,
         "master_seed": int(master_seed),
         "variance_components": {
@@ -68,10 +69,11 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
     if covariate_list is not None:
         summary["covariate_list"] = covariate_list
 
-    summary["thresholds"] = {"Bonferroni_05": 0.05/n_snps, "Bonferroni_01": 0.01/n_snps}
-    if max_stats is not None:
-        summary["thresholds"]["permutation_threshold_05"] = float(np.percentile(max_stats, 95))
-        summary["thresholds"]["permutation_threshold_01"] = float(np.percentile(max_stats, 99))
+    summary["Bonferroni_threshold_05"]: 0.05/n_snps
+    if len(perm_thres) > 0:
+        for key in perm_thres:
+            summary[f"permutation_threshold_{key}_05"] = perm_thres[key]
+
 
 
     # 2. Print to Console (Formatted)

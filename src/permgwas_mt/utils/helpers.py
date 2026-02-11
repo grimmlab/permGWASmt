@@ -2,6 +2,12 @@ import torch
 import gc
 import logging
 
+def get_trait_design(trait_design="identity"):
+    if trait_design == "identity":
+        return torch.eye(2)
+    else:
+        raise ValueError(f"Unknown trait design matrix: {trait_design}")
+
 def get_bivariate_hypotheses(test_type="any"):
     """
     Generates A_alt and A_null matrices for common bivariate tests.

@@ -20,6 +20,7 @@ class InputConfig:
     outfile: str | None = None
 
     hypothesis_type: str = "any"
+    trait_design: str = "identity"
     maf_threshold: int = 0
     n_permutations: int = 0
 
@@ -156,8 +157,11 @@ class InputConfig:
                     UserWarning,
                 )
 
-        if self.hypothesis_type not in ("any", "common", "specific"):
+        if self.hypothesis_type not in ("any", "common", "specific", "all"):
             raise ValueError(f"Unknown hypothesis test type: {self.hypothesis_type}")
+
+        if self.trait_design != "identity":
+            raise ValueError(f"Unknown trait design matrix: {self.trait_design}")
 
         if self.master_seed is None:
             object.__setattr__(self, "master_seed", np.random.randint(0, 2**31 - 1))
@@ -222,14 +226,14 @@ class InputConfig:
 
         # prepare output filename
         tmp_file = self.outfile if self.outfile is not None else "_".join(self.traits)
-        out_path = self.outdir / f"p_values_{tmp_file}.csv"
+        out_path = self.outdir / f"summary_stats_{tmp_file}.yaml"
 
         if not out_path.exists():
             object.__setattr__(self, "outfile", tmp_file)
         else:
             i = 1
             while True:
-                candidate = self.outdir / f"p_values_{tmp_file}({i}).csv"
+                candidate = self.outdir / f"summary_stats_{tmp_file}({i}).yaml"
                 if not candidate.exists():
                     object.__setattr__(self, "outfile", f"{tmp_file}({i})")
                     break
@@ -262,12 +266,16 @@ class InputConfig:
 
     # ----------------------------- PUBLIC METHODS ------------------------------
 
-    def resolve_output_file(self, result_type:ResultType) -> Path:
+    def resolve_output_file(self, result_type: ResultType, hypothesis_type: str=None) -> Path:
         """
         Return output file path for given ResultType
+        :param hypothesis_type:
         :param result_type: ResultType of output file
         :return: output file path
         """
-        base = f"{result_type.stem}_{self.outfile}"
+        if result_type.stem == "summary_stats":
+            base = f"{result_type.stem}_{self.outfile}"
+        else:
+            base = f"{result_type.stem}_{hypothesis_type}_{self.outfile}"
         out_path = self.outdir / f"{base}{result_type.suffix}"
         return out_path

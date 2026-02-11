@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from permgwas_mt.utils.input_config import InputConfig
 from permgwas_mt.utils.result_types import ResultType
@@ -37,71 +38,60 @@ def run(input_config:InputConfig):
     with timed(timer, "fit data", use_cuda=(device.type == "cuda")):
         # TODO put in dataloader
         eigenvals, Ut = spectral_decomp(dataset.K, input_config.device)
-        # TODO put in cli args
-        A_cov = torch.eye(2)
+        A_cov = helpers.get_trait_design(input_config.trait_design)
         solver = BivariateGWAS(Y=dataset.y, Ut=Ut, eigenvals=eigenvals, Z=dataset.fixed, A_cov=A_cov,
                                device=input_config.device, dtype=torch.float32)
         solver.fit_null_model(full_wald=True)
     timer.log("Have null model.")
 
+    if input_config.hypothesis_type == "all":
+        hypothesis_type = ["any", "common", "specific"]
+    else:
+        hypothesis_type = [input_config.hypothesis_type]
 
-    print(f"Start GWAS scan. Test for {input_config.hypothesis_type} effects.")
-    A_alt, A_null = helpers.get_bivariate_hypotheses(input_config.hypothesis_type)
+    perm_thres = {}
+    for test_type in hypothesis_type:
+        print(f"Start GWAS scan. Test for {test_type} effects.")
+        A_alt, A_null = helpers.get_bivariate_hypotheses(test_type)
 
-    with timed(timer, "gwas scan", use_cuda=(device.type == "cuda")):
-        """f_stats, p_values, betas = solver.run_full_gwas_scan(genotype_data=dataset.X,
-                                                             n_snps=dataset.n_snps,
-                                                             A_alt=A_alt,
-                                                             A_null=A_null,
-                                                             batch_size=5000)"""
+        with timed(timer, f"gwas scan ({test_type})", use_cuda=(device.type == "cuda")):
+            f_stats, p_values, betas = helpers.robust_gwas_executor(solver.run_full_gwas_scan,
+                                                                     genotype_data=dataset.X,
+                                                                     n_snps=dataset.n_snps,
+                                                                     A_alt=A_alt,
+                                                                     A_null=A_null,
+                                                                     batch_size=5000
+                                                                     )
+        timer.log("Have p-values.")
+        pval_file = input_config.resolve_output_file(ResultType.P_VALUES, test_type)
+        result_df = save_p_values(filepath=pval_file,
+                                  f_stats=f_stats,
+                                  p_values=p_values,
+                                  betas=betas,
+                                  chromosomes=dataset.chromosomes,
+                                  positions=dataset.positions)
 
-        f_stats, p_values, betas = helpers.robust_gwas_executor(solver.run_full_gwas_scan,
-                                                                 genotype_data=dataset.X,
-                                                                 n_snps=dataset.n_snps,
-                                                                 A_alt=A_alt,
-                                                                 A_null=A_null,
-                                                                 batch_size=5000
-                                                                 )
-    timer.log("Have p-values.")
 
-
-    if input_config.n_permutations > 0:
-        with timed(timer, "permutations", use_cuda=(device.type == "cuda")):
-            print("Start permutations.")
-            """max_stats, perm_seeds = solver.run_permutation_gwas(genotype_data=dataset.X,
+        if input_config.n_permutations > 0:
+            with timed(timer, f"permutations ({test_type})", use_cuda=(device.type == "cuda")):
+                print("Start permutations.")
+                max_stats, perm_seeds = helpers.robust_gwas_executor(solver.run_permutation_gwas,
+                                                                genotype_data=dataset.X,
                                                                 n_perms=input_config.n_permutations,
                                                                 n_snps=dataset.n_snps,
-                                                                master_seed=master_seed,
+                                                                master_seed=input_config.master_seed,
                                                                 A_alt=A_alt,
                                                                 A_null=A_null,
                                                                 batch_size=5000,
                                                                 perm_batch_size=100
-                                                                )"""
-
-            max_stats, perm_seeds = helpers.robust_gwas_executor(solver.run_permutation_gwas,
-                                                            genotype_data=dataset.X,
-                                                            n_perms=input_config.n_permutations,
-                                                            n_snps=dataset.n_snps,
-                                                            master_seed=input_config.master_seed,
-                                                            A_alt=A_alt,
-                                                            A_null=A_null,
-                                                            batch_size=5000,
-                                                            perm_batch_size=100
-                                                            )
-        timer.log("Have max test statistics")
-    else:
-        max_stats, perm_seeds = None, None
+                                                                )
+            timer.log("Have max test statistics")
+            max_test_stat_file = input_config.resolve_output_file(ResultType.MAX_TEST_STATS, test_type)
+            save_max_test_stats(filepath=max_test_stat_file, max_test_stats=max_stats, seeds=perm_seeds)
+            perm_thres[test_type] = float(np.percentile(max_stats, 95))
 
 
-    print("Finished GWAS scan. Save results")
-    pval_file = input_config.resolve_output_file(ResultType.P_VALUES)
     summary_file = input_config.resolve_output_file(ResultType.SUMMARY_STATS)
-    result_df = save_p_values(filepath=pval_file,
-                              f_stats=f_stats,
-                              p_values=p_values,
-                              betas=betas,
-                              chromosomes=dataset.chromosomes,
-                              positions=dataset.positions)
     save_gwas_summary(filepath=summary_file,
                       genotype_file=input_config.genotype_file,
                       phenotype_file=input_config.phenotype_file,
@@ -112,16 +102,14 @@ def run(input_config:InputConfig):
                       l_G=solver.l_G.detach().cpu().numpy().tolist(),
                       l_R=solver.l_R.detach().cpu().numpy().tolist(),
                       hypothesis_type=input_config.hypothesis_type,
+                      trait_design=input_config.trait_design,
                       n_perm=input_config.n_permutations,
                       master_seed=input_config.master_seed,
-                      max_stats=max_stats,
+                      perm_thres=perm_thres,
                       kinship_file=input_config.kinship_file,
                       covariate_file=input_config.covariate_file,
                       covariate_list=input_config.covariate_list,
                       )
-    if input_config.n_permutations > 0:
-        max_test_stat_file = input_config.resolve_output_file(ResultType.MAX_TEST_STATS)
-        save_max_test_stats(filepath=max_test_stat_file, max_test_stats=max_stats, seeds=perm_seeds)
 
     timer.report()
 

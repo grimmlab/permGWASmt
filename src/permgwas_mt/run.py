@@ -36,8 +36,10 @@ def parse_args():
     parser.add_argument("--outfile", type=str, default=None,
                         help="Result file name (default: pheno1_pheno2)")
     parser.add_argument("--hypothesis_type", type=str, default=None,
-                        help="Optional hypothesis type. Valid options are 'any', 'common' and 'specific'. "
+                        help="Optional hypothesis type. Valid options are 'any', 'common', 'specific' and 'all'. "
                              "(default: 'any')")
+    parser.add_argument("--trait_design", type=str, default=None,
+                        help="Optional trait design matrix type. Currently only support 'identity'.")
 
     # Compute settings
     parser.add_argument("--device", type=str, default=None,
