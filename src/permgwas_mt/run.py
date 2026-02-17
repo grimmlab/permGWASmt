@@ -1,6 +1,6 @@
 import argparse
 import sys
-from permgwas_mt.utils.input_config import InputConfig
+from permgwas_mt.utils.get_input_config import InputConfig
 from permgwas_mt.perform_mtgwas import run
 
 
@@ -48,6 +48,8 @@ def parse_args():
                         help="Load genotype file completely during preprocessing. Otherwise load genotype batch-wise "
                              "for computations to save memory. Batch-wise loading only possible for .h5 genotype files "
                              "and if kinship is provided.")
+    parser.add_argument("--no_scan", action="store_true", default=None,
+                        help="Only determine and save variance components without running a full GWAS scan.")
     parser.add_argument('-batch', '--batch_size', type=int, default=None,
                         help='Number of SNPs to work on simultaneously (default: 10000)')
     parser.add_argument('-batch_perm', '--perm_batch_size', type=int, default=None,

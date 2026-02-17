@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from permgwas_mt.utils.input_config import InputConfig
+from permgwas_mt.utils.get_input_config import InputConfig
 from permgwas_mt.utils.result_types import ResultType
 from permgwas_mt.preprocessing.data_loader import Dataset
 from permgwas_mt.models.bivariate_gwas import BivariateGWAS
@@ -12,7 +12,9 @@ import permgwas_mt.utils.helpers as helpers
 
 # TODO test on gpu
 # TODO move spectral_dec to data loader
+# TODO clean up data loader
 # TODO include and test full X vs. batchwise
+# todo allow 2 pheno files
 
 def spectral_decomp(K: torch.Tensor, device):
     """
@@ -42,53 +44,56 @@ def run(input_config:InputConfig):
         solver = BivariateGWAS(Y=dataset.y, Ut=Ut, eigenvals=eigenvals, Z=dataset.fixed, A_cov=A_cov,
                                device=input_config.device, dtype=torch.float32)
         solver.fit_null_model(full_wald=True)
+        metrics = solver.get_metrics()
     timer.log("Have null model.")
 
-    if input_config.hypothesis_type == "all":
-        hypothesis_type = ["any", "common", "specific"]
-    else:
-        hypothesis_type = [input_config.hypothesis_type]
-
     perm_thres = {}
-    for test_type in hypothesis_type:
-        print(f"Start GWAS scan. Test for {test_type} effects.")
-        A_alt, A_null = helpers.get_bivariate_hypotheses(test_type)
+    if not input_config.no_scan:
+        if input_config.hypothesis_type == "all":
+            hypothesis_type = ["any", "common", "specific"]
+        else:
+            hypothesis_type = [input_config.hypothesis_type]
 
-        with timed(timer, f"gwas scan ({test_type})", use_cuda=(device.type == "cuda")):
-            f_stats, p_values, betas = helpers.robust_gwas_executor(solver.run_full_gwas_scan,
-                                                                     genotype_data=dataset.X,
-                                                                     n_snps=dataset.n_snps,
-                                                                     A_alt=A_alt,
-                                                                     A_null=A_null,
-                                                                     batch_size=5000
-                                                                     )
-        timer.log("Have p-values.")
-        pval_file = input_config.resolve_output_file(ResultType.P_VALUES, test_type)
-        result_df = save_p_values(filepath=pval_file,
-                                  f_stats=f_stats,
-                                  p_values=p_values,
-                                  betas=betas,
-                                  chromosomes=dataset.chromosomes,
-                                  positions=dataset.positions)
+        for test_type in hypothesis_type:
+            print(f"Start GWAS scan. Test for {test_type} effects.")
+            A_alt, A_null = helpers.get_bivariate_hypotheses(test_type)
+
+            with timed(timer, f"gwas scan ({test_type})", use_cuda=(device.type == "cuda")):
+                f_stats, p_values, betas, ses = helpers.robust_gwas_executor(solver.run_full_gwas_scan,
+                                                                         genotype_data=dataset.X,
+                                                                         n_snps=dataset.n_snps,
+                                                                         A_alt=A_alt,
+                                                                         A_null=A_null,
+                                                                         batch_size=5000
+                                                                         )
+            timer.log("Have p-values.")
+            pval_file = input_config.resolve_output_file(ResultType.P_VALUES, test_type)
+            result_df = save_p_values(filepath=pval_file,
+                                      f_stats=f_stats,
+                                      p_values=p_values,
+                                      betas=betas,
+                                      ses=ses,
+                                      chromosomes=dataset.chromosomes,
+                                      positions=dataset.positions)
 
 
-        if input_config.n_permutations > 0:
-            with timed(timer, f"permutations ({test_type})", use_cuda=(device.type == "cuda")):
-                print("Start permutations.")
-                max_stats, perm_seeds = helpers.robust_gwas_executor(solver.run_permutation_gwas,
-                                                                genotype_data=dataset.X,
-                                                                n_perms=input_config.n_permutations,
-                                                                n_snps=dataset.n_snps,
-                                                                master_seed=input_config.master_seed,
-                                                                A_alt=A_alt,
-                                                                A_null=A_null,
-                                                                batch_size=5000,
-                                                                perm_batch_size=100
-                                                                )
-            timer.log("Have max test statistics")
-            max_test_stat_file = input_config.resolve_output_file(ResultType.MAX_TEST_STATS, test_type)
-            save_max_test_stats(filepath=max_test_stat_file, max_test_stats=max_stats, seeds=perm_seeds)
-            perm_thres[test_type] = float(np.percentile(max_stats, 95))
+            if input_config.n_permutations > 0:
+                with timed(timer, f"permutations ({test_type})", use_cuda=(device.type == "cuda")):
+                    print("Start permutations.")
+                    max_stats, perm_seeds = helpers.robust_gwas_executor(solver.run_permutation_gwas,
+                                                                    genotype_data=dataset.X,
+                                                                    n_perms=input_config.n_permutations,
+                                                                    n_snps=dataset.n_snps,
+                                                                    master_seed=input_config.master_seed,
+                                                                    A_alt=A_alt,
+                                                                    A_null=A_null,
+                                                                    batch_size=5000,
+                                                                    perm_batch_size=100
+                                                                    )
+                timer.log("Have max test statistics")
+                max_test_stat_file = input_config.resolve_output_file(ResultType.MAX_TEST_STATS, test_type)
+                save_max_test_stats(filepath=max_test_stat_file, max_test_stats=max_stats, seeds=perm_seeds)
+                perm_thres[test_type] = float(np.percentile(max_stats, 95))
 
 
     summary_file = input_config.resolve_output_file(ResultType.SUMMARY_STATS)
@@ -101,10 +106,12 @@ def run(input_config:InputConfig):
                       maf_threshold=input_config.maf_threshold,
                       l_G=solver.l_G.detach().cpu().numpy().tolist(),
                       l_R=solver.l_R.detach().cpu().numpy().tolist(),
-                      hypothesis_type=input_config.hypothesis_type,
+                      metrics=metrics,
                       trait_design=input_config.trait_design,
+                      trait_corr=dataset.trait_corr,
                       n_perm=input_config.n_permutations,
                       master_seed=input_config.master_seed,
+                      hypothesis_type=input_config.hypothesis_type,
                       perm_thres=perm_thres,
                       kinship_file=input_config.kinship_file,
                       covariate_file=input_config.covariate_file,

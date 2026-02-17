@@ -143,6 +143,7 @@ class BivariateGWAS:
         s2e = s2g * delta
         return s2g, s2e
 
+    # TODO move this to helpers
     def _clear_vram(self):
         """
         Cleanup for PyTorch caching allocator
@@ -222,6 +223,14 @@ class BivariateGWAS:
         del V_inv_null, XV, XVX, res
         self._clear_vram()
 
+    def get_metrics(self):
+        """Returns heritability (h2), genetic correlation (rg) and residual correlation (re)."""
+        G, R = self.vec_to_sym_matrix(self.l_G), self.vec_to_sym_matrix(self.l_R)
+        h2 = [G[i, i] / (G[i, i] + R[i, i]) for i in range(2)]
+        rg = G[0, 1] / torch.sqrt(G[0, 0] * G[1, 1])
+        re = R[0, 1] / torch.sqrt(R[0, 0] * R[1, 1])
+        return {"h2_1": h2[0].item(), "h2_2": h2[1].item(), "rg": rg.item(), "re": re.item()}
+
     def _gwas_scan(self, g_batch: torch.Tensor, A_alt: torch.Tensor, A_null: torch.Tensor = None):
         """
         Performs Bivariate GWAS Scan using the F-test
@@ -257,8 +266,16 @@ class BivariateGWAS:
         # project to alternative space and compute Wald Chi-square: (gVres)^T * (gVg)^-1 * gVres
         gVres = torch.matmul(gVres, A_alt)
         gVg = torch.matmul(A_alt.t(), torch.matmul(gVg, A_alt))
-        beta_alt = torch.linalg.solve(gVg, gVres.unsqueeze(-1))  # (n_snps,k,1)
+        gVg = torch.linalg.inv(gVg)  # get inverse gVg^-1
+        beta_alt = torch.bmm(gVg, gVres.unsqueeze(-1))  # (n_snps,k,1)
         chi_alt = torch.bmm(gVres.unsqueeze(1), beta_alt).flatten()  # (n_snps,)
+
+        # get standard errors sqrt(diag(gVg^-1))
+        if gVg.shape[1] == 1:
+            se_alt = torch.sqrt(gVg.reshape(-1,1))
+        else:
+            se_alt = torch.sqrt(torch.diagonal(gVg, dim1=-2, dim2=-1))
+
         del gVres, gVg
 
         if chi_null is not None:
@@ -273,7 +290,7 @@ class BivariateGWAS:
         f_stat = f_stat.cpu().numpy()
         df2 = (2 * self.n_samples) - self.n_fixed - A_alt.shape[1]
         p_vals = stats.f.sf(f_stat, df1, df2)
-        return f_stat, p_vals, beta_alt.squeeze(-1).cpu().numpy()
+        return f_stat, p_vals, beta_alt.squeeze(-1).cpu().numpy(), se_alt.cpu().numpy()
 
     @staticmethod
     def _check_genotypes(genotype_data, n_snps, batch_size):
@@ -310,7 +327,7 @@ class BivariateGWAS:
             A_alt = A_alt.to(device=self.device, dtype=self.dtype)
         if A_null is not None:
             A_null = A_null.to(device=self.device, dtype=self.dtype)
-        all_f, all_p, all_betas = [], [], []
+        all_f, all_p, all_betas, all_se = [], [], [], []
 
         # check if genotypes is tensor or generator
         is_tensor, iterable, n_batches = self._check_genotypes(genotype_data, n_snps, batch_size)
@@ -323,14 +340,15 @@ class BivariateGWAS:
                 else:
                     g_batch = entry.to(device=self.device, dtype=self.dtype, non_blocking=True)
                 g_batch = torch.mm(self.Ut, g_batch)
-                test_stats, p_vals, betas = self._gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
+                test_stats, p_vals, betas, se = self._gwas_scan(g_batch=g_batch, A_alt=A_alt, A_null=A_null)
                 all_f.append(test_stats)
                 all_p.append(p_vals)
                 all_betas.append(betas)
+                all_se.append(se)
 
                 self._clear_vram()
 
-        return np.concatenate(all_f), np.concatenate(all_p), np.concatenate(all_betas)
+        return np.concatenate(all_f), np.concatenate(all_p), np.concatenate(all_betas), np.concatenate(all_se)
 
     def _permutation_scan(self, g_batch: torch.Tensor, seeds: np.array, A_alt: torch.Tensor,
                           A_null: torch.Tensor = None):
@@ -444,3 +462,4 @@ class BivariateGWAS:
                 self._clear_vram()
 
         return max_stats.cpu().numpy(), perm_seeds
+

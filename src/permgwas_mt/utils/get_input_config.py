@@ -19,6 +19,7 @@ class InputConfig:
     outdir: Path | None = None
     outfile: str | None = None
 
+    no_scan: bool = False
     hypothesis_type: str = "any"
     trait_design: str = "identity"
     maf_threshold: int = 0
@@ -156,9 +157,11 @@ class InputConfig:
                     "supported for genotype file type HDF5 and if precomputed kinship matrix is provided.",
                     UserWarning,
                 )
-
-        if self.hypothesis_type not in ("any", "common", "specific", "all"):
-            raise ValueError(f"Unknown hypothesis test type: {self.hypothesis_type}")
+        if self.no_scan:
+            object.__setattr__(self, "hypothesis_type", None)
+        else:
+            if self.hypothesis_type not in ("any", "common", "specific", "all"):
+                raise ValueError(f"Unknown hypothesis test type: {self.hypothesis_type}")
 
         if self.trait_design != "identity":
             raise ValueError(f"Unknown trait design matrix: {self.trait_design}")

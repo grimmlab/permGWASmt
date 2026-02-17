@@ -6,7 +6,7 @@ import h5py
 import pathlib
 from pandas_plink import read_plink1_bin
 
-from permgwas_mt.utils.input_config import InputConfig
+from permgwas_mt.utils.get_input_config import InputConfig
 from permgwas_mt.utils.file_types import (GenotypeFileType, KinshipFileType)
 
 
@@ -475,6 +475,7 @@ class Dataset(Genotype):
         super().__init__(config)
 
         self.y = None
+        self.trait_corr = None
         self.K = None
         self.fixed = None
         self.load_and_prepare_data(config=config)
@@ -522,6 +523,7 @@ class Dataset(Genotype):
                 self.use_maf_filter()
             self.n_snps = len(self.positions)
         self.y = self.get_matched_data(data=y, row_index=pheno_index)
+        self.trait_corr = torch.corrcoef(self.y.t())[0,1].item()
         self.sample_ids = self.get_matched_data(data=self.sample_ids, row_index=self.sample_index)
         self.n_samples = len(self.sample_ids)
         # kinship
