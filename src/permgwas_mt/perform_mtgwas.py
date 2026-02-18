@@ -3,6 +3,7 @@ import numpy as np
 
 from permgwas_mt.utils.get_input_config import InputConfig
 from permgwas_mt.utils.result_types import ResultType
+# from permgwas_mt.preprocessing.data_loader_old import Dataset
 from permgwas_mt.preprocessing.data_loader import Dataset
 from permgwas_mt.models.bivariate_gwas import BivariateGWAS
 from permgwas_mt.utils.save_results import save_p_values, save_max_test_stats, save_gwas_summary
@@ -13,6 +14,7 @@ import permgwas_mt.utils.helpers as helpers
 # TODO test on gpu
 # TODO move spectral_dec to data loader
 # TODO clean up data loader
+# TODO save MAF
 # TODO include and test full X vs. batchwise
 # todo allow 2 pheno files
 
@@ -34,7 +36,7 @@ def run(input_config:InputConfig):
     with timed(timer, "load data", use_cuda=(device.type == "cuda")):
         dataset = Dataset(input_config)
     timer.log("Loaded data.")
-    print(f"Dataset size: genotype {dataset.X.shape}, phenotype {dataset.y.shape}")
+    print(f"Number of samples: {dataset.n_samples}, Number of SNPs {dataset.n_snps}")
 
     print("Start fitting null model.")
     with timed(timer, "fit data", use_cuda=(device.type == "cuda")):

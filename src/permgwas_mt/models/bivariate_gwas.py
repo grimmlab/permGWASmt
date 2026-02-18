@@ -143,7 +143,6 @@ class BivariateGWAS:
         s2e = s2g * delta
         return s2g, s2e
 
-    # TODO move this to helpers
     def _clear_vram(self):
         """
         Cleanup for PyTorch caching allocator

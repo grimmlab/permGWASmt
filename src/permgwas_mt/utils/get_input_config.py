@@ -169,6 +169,15 @@ class InputConfig:
         if self.master_seed is None:
             object.__setattr__(self, "master_seed", np.random.randint(0, 2**31 - 1))
 
+        if self.batch_size is None:
+            object.__setattr__(self, "batch_size", 10000)
+
+        if self.perm_batch_size is None:
+            object.__setattr__(self, "perm_batch_size", 1000)
+
+        if self.device is None:
+            object.__setattr__(self, "device", "cpu")
+
 
     def _validate_phenotypes(self):
         if len(self.traits) != 2:
