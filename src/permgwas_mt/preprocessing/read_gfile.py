@@ -48,7 +48,7 @@ class CSVReader:
 
         # Split "CHR_POS" into metadata arrays
         meta = [s.split('_') for s in rsids]
-        self.chrs = np.array([int(m[0]) for m in meta])
+        self.chrs = np.array([m[0] for m in meta])
         self.pos = np.array([int(m[1]) for m in meta])
 
     def get_ids(self):

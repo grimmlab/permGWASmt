@@ -4,12 +4,13 @@ import pandas as pd
 from datetime import datetime
 
 
-def save_p_values(filepath, f_stats, p_values, betas, ses, chromosomes, positions):
+def save_p_values(filepath, f_stats, p_values, betas, ses, chromosomes, positions, maf):
     n_effects = betas.shape[1] if betas.ndim > 1 else 1
 
     data = {
         'CHR': chromosomes,
         'POS': positions,
+        'MAF': maf,
         'F_STAT': f_stats,
         'P-VAL': p_values
     }
@@ -33,11 +34,12 @@ def save_p_values(filepath, f_stats, p_values, betas, ses, chromosomes, position
     return results_df
 
 
-def save_max_test_stats(filepath, max_test_stats, seeds):
+def save_max_test_stats(filepath, max_test_stats, min_p_vals, seeds):
     df = pd.DataFrame({'SEED': seeds,
-                       'MAX_F_STAT': max_test_stats})
+                       'MAX_F_STAT': max_test_stats,
+                       'MIN_P_VAL': min_p_vals,})
     df.to_csv(filepath, index=False)
-    print(f"Saved max test statistics for {max_test_stats.shape[0]} permutations to {filepath}")
+    print(f"Saved min p-values for {max_test_stats.shape[0]} permutations to {filepath}")
 
 
 def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples, n_snps, maf_threshold, l_G, l_R,
@@ -58,11 +60,11 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
     if covariate_file is not None:
         summary["covariate_file"] = covariate_file.name
     if covariate_list is not None:
-        summary["covariate_list"] = covariate_list
-    summary.update({"n_samples": n_samples,
-                    "n_snps": n_snps,
-                    "maf_threshold": maf_threshold,
+        summary["covariates"] = covariate_list
+    summary.update({"maf_threshold": maf_threshold,
                     "trait_design": trait_design,
+                    "n_samples": n_samples,
+                    "n_snps": n_snps,
                     "trait_correlation": trait_corr,
                     "variance_components": {
                         "l_G": l_G,
@@ -79,18 +81,18 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
         summary["hypothesis_type"] = hypothesis_type
         summary["Bonferroni_threshold_05"]: 0.05/n_snps
         if len(perm_thres) > 0:
-            summary["n_perm"] = n_perm
-            summary["master_seed"] = int(master_seed)
+            summary["n_permutations"] = n_perm
+            summary["perm_master_seed"] = int(master_seed)
             for key in perm_thres:
                 summary[f"permutation_threshold_{key}_05"] = perm_thres[key]
 
     # 2. Print to Console (Formatted)
-    print("\n" + "=" * 30)
+    print("\n" + "=" * 40)
     print("GWAS RUN SUMMARY")
-    print("=" * 30)
+    print("=" * 40)
     # This renders the dict as a clean YAML string for the terminal
     print(yaml.dump(summary, default_flow_style=False, sort_keys=False))
-    print("=" * 30 + "\n")
+    print("=" * 40 + "\n")
 
     with open(filepath, 'w') as f:
         yaml.dump(summary, f, default_flow_style=False, sort_keys=False)

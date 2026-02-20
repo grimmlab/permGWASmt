@@ -44,10 +44,6 @@ def parse_args():
     # Compute settings
     parser.add_argument("--device", type=str, default=None,
                         help="Device to run on (cpu or cuda:N), (default: cpu)")
-    parser.add_argument("--load_genotype", action="store_true", default=None,
-                        help="Load genotype file completely during preprocessing. Otherwise load genotype batch-wise "
-                             "for computations to save memory. Batch-wise loading only possible for .h5 genotype files "
-                             "and if kinship is provided.")
     parser.add_argument("--no_scan", action="store_true", default=None,
                         help="Only determine and save variance components without running a full GWAS scan.")
     parser.add_argument('-batch', '--batch_size', type=int, default=None,
@@ -56,6 +52,8 @@ def parse_args():
                         help='Number of SNPs to work on simultaneously for permutations (default: 1000)')
     parser.add_argument('--master_seed', type=int, default=None,
                         help='Master seed used for permutations (default: will be randomly generated)')
+    parser.add_argument('--time_report', action='store_true', default=None,
+                        help='Print time report at the end of analysis (default: False)')
 
     # Config file
     parser.add_argument("--config", "--config_file", type=str, default=None,

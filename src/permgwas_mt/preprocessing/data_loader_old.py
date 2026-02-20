@@ -204,7 +204,7 @@ class Genotype:
 
         :return: Genotype values, sample_ids, chromosomes and positions
         """
-        gt = pd.read_csv(self.genotype_file, index_col=0)
+        gt = pd.read_csv(self.genotype_file, sep=None, engine='python',index_col=0)
         snp_ids = np.array(list(map(lambda a: a.split("_"), gt.columns.values)))
         chromosomes = snp_ids[:, 0]
         positions = snp_ids[:, 1].astype(int)
@@ -569,7 +569,7 @@ class Dataset(Genotype):
             y.drop(columns='FID', inplace=True)
 
         # account for replicates
-        y = y.sort_values(y.columns[0]).groupby(y.columns[0]).mean()
+        y = y.groupby(y.columns[0]).mean()
 
         # drop rows with missing values
         y = y[traits].dropna()

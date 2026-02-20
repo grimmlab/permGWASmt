@@ -25,11 +25,11 @@ class InputConfig:
     maf_threshold: int = 0
     n_permutations: int = 0
 
-    load_genotype: bool = False
     batch_size: int = 10000
     perm_batch_size: int = 1000
     device: str = "cpu"
     master_seed: int | None = None
+    time_report: bool = False
 
     genotype_type: GenotypeFileType = field(init=False)
     phenotype_type: PhenotypeFileType = field(init=False)
@@ -148,15 +148,6 @@ class InputConfig:
             if not path.is_file():
                 raise FileNotFoundError(f"Input file not found: {path}")
 
-        # check batch-wise loading
-        if not self.load_genotype:
-            if (self.genotype_type != GenotypeFileType.HDF5) or (self.kinship_file is None):
-                object.__setattr__(self, "load_genotype", True)
-                warnings.warn(
-                    "Full genotype matrix will be loaded during preprocessing. Batch-wise loading is only "
-                    "supported for genotype file type HDF5 and if precomputed kinship matrix is provided.",
-                    UserWarning,
-                )
         if self.no_scan:
             object.__setattr__(self, "hypothesis_type", None)
         else:
@@ -218,17 +209,14 @@ class InputConfig:
                 UserWarning,
             )
 
-        data_cols = df.columns[1:]
+        data_cols = df.columns[1:].tolist()
         if self.covariate_list is None:
-            object.__setattr__(self, "covariate_list", tuple(data_cols))
-            return
-
+            object.__setattr__(self, "covariate_list", data_cols)
         else:
             missing = set(self.covariate_list) - set(data_cols)
             if missing:
                 raise ValueError("The following covariate columns were not found in covariate file: "
                                  + ", ".join(sorted(missing)))
-            object.__setattr__(self, "covariate_list", tuple(self.covariate_list))
 
     def _prepare_output(self):
         # prepare output directory

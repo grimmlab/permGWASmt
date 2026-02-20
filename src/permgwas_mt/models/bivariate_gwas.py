@@ -92,7 +92,7 @@ class BivariateGWAS:
             self.l_G[2] = torch.sqrt(torch.clamp(s2g2 - self.l_G[1] ** 2, min=1e-6))
             self.l_R[2] = torch.sqrt(torch.clamp(s2e2 - self.l_R[1] ** 2, min=1e-6))
 
-    def _univariate_reml(self, trait_idx, tol=1e-5, max_iter=20):
+    def _univariate_reml(self, trait_idx, tol=1e-5, max_iter=100):
         """
         1D Golden Section Search for univariate REML initialization.
         Finds the optimal delta = var_e / var_g.
@@ -199,7 +199,7 @@ class BivariateGWAS:
         optimize REML loss for null model, optionally save intermediate results X^TV^-1 and (X^TV^-1X)^-1
         :param full_wald: boolean, whether to save intermediate results for full Wald Chi square scan
         """
-        optimizer = torch.optim.LBFGS([self.l_G, self.l_R], lr=0.05, max_iter=100)
+        optimizer = torch.optim.LBFGS([self.l_G, self.l_R], lr=0.05, max_iter=1000)
         def closure():
             optimizer.zero_grad()
             loss, _, _, _, _, _ = self.reml_loss()
@@ -406,13 +406,8 @@ class BivariateGWAS:
 
         if chi_null is not None:
             stat = torch.clamp(chi_alt - chi_null, min=0.0)
-            df1 = float(A_alt.shape[1] - A_null.shape[1])
         else:
             stat = chi_alt
-            df1 = float(A_alt.shape[1])
-        # compute F-statistic
-        stat = stat / df1
-
         # Return max across SNPs (dim=1)
         return torch.max(stat, dim=1)[0]
 
@@ -429,6 +424,9 @@ class BivariateGWAS:
             A_alt = A_alt.to(device=self.device, dtype=self.dtype)
         if A_null is not None:
             A_null = A_null.to(device=self.device, dtype=self.dtype)
+            df1 = float(A_alt.shape[1] - A_null.shape[1])
+        else:
+            df1 = float(A_alt.shape[1])
 
         # get list of seeds for permutations
         rng = np.random.default_rng(master_seed)
@@ -460,5 +458,11 @@ class BivariateGWAS:
                 del g_batch
                 self._clear_vram()
 
-        return max_stats.cpu().numpy(), perm_seeds
+        # compute F-statistic and p-values
+        max_stats = max_stats / df1
+        max_stats = max_stats.cpu().numpy()
+        df2 = (2 * self.n_samples) - self.n_fixed - A_alt.shape[1]
+        min_p_vals = stats.f.sf(max_stats, df1, df2)
+
+        return max_stats, min_p_vals, perm_seeds
 
