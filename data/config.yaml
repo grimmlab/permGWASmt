@@ -7,15 +7,15 @@ traits:
 kinship_file:
 covariate_file:
 covariate_list:
-no_scan: True
-hypothesis_type:
-maf_threshold:
+no_scan: False
+hypothesis_type: "any"
+maf_threshold: 0
 n_permutations: 0
 outdir:
 outfile:
-device: 
+device: "cpu"
 dtype:
 batch_size:
 perm_batch_size:
 master_seed:
-time_report:
+time_report: True

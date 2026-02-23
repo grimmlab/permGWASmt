@@ -11,3 +11,4 @@ RUN pip install --no-cache-dir -r /configfiles/requirements.txt
 
 WORKDIR /app
 COPY . /app
+ENV PYTHONPATH="/app/src:/app/GWASmt/src:${PYTHONPATH}"

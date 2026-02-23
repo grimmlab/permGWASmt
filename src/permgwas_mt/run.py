@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument('-batch', '--batch_size', type=int, default=None,
                         help='Number of SNPs to work on simultaneously (default: 10000)')
     parser.add_argument('-batch_perm', '--perm_batch_size', type=int, default=None,
-                        help='Number of SNPs to work on simultaneously for permutations (default: 1000)')
+                        help='Number of permutations to work on simultaneously (default: 100)')
     parser.add_argument('--master_seed', type=int, default=None,
                         help='Master seed used for permutations (default: will be randomly generated)')
     parser.add_argument('--time_report', action='store_true', default=None,

@@ -26,7 +26,7 @@ class InputConfig:
     n_permutations: int = 0
 
     batch_size: int = 10000
-    perm_batch_size: int = 1000
+    perm_batch_size: int = 100
     device: str = "cpu"
     dtype: str = "float32"
     master_seed: int | None = None
