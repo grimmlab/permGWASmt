@@ -1,5 +1,4 @@
 import yaml
-import numpy as np
 import pandas as pd
 from datetime import datetime
 
@@ -66,7 +65,7 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
                     "n_samples": n_samples,
                     "n_snps": n_snps,
                     "trait_correlation": trait_corr,
-                    "variance_components": {
+                    "Cholesky_factors": {
                         "l_G": l_G,
                         "l_R": l_R,
                     },
@@ -79,7 +78,7 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
     })
     if hypothesis_type is not None:
         summary["hypothesis_type"] = hypothesis_type
-        summary["Bonferroni_threshold_05"]: 0.05/n_snps
+        summary["Bonferroni_threshold_05"] = 0.05/n_snps
         if len(perm_thres) > 0:
             summary["n_permutations"] = n_perm
             summary["perm_master_seed"] = int(master_seed)

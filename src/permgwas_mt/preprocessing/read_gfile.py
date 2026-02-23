@@ -4,6 +4,7 @@ import torch
 import h5py
 
 # TODO PLINKReader
+# TODO sanity checks and encoding
 
 class H5Reader:
     def __init__(self, genotype_file):

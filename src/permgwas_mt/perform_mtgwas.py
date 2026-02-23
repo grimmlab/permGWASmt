@@ -18,17 +18,18 @@ import permgwas_mt.utils.helpers as helpers
 
 def run(input_config:InputConfig):
     device = torch.device(input_config.device)
+    dtype = helpers.get_dtype(input_config.dtype)
     timer = Timer()
     with timed(timer, "load data", use_cuda=(device.type == "cuda")):
         print(f"Running analysis on device {input_config.device}\n\nStart loading data.")
-        dataset = Dataset(input_config)
+        dataset = Dataset(input_config, dtype=dtype)
     timer.log("Loaded data.")
 
     with timed(timer, "fit data", use_cuda=(device.type == "cuda")):
         print(f"\nStart fitting null model for {dataset.n_samples} samples and {dataset.fixed.shape[1]} fixed effect(s).")
         A_cov = helpers.get_trait_design(input_config.trait_design)
         solver = BivariateGWAS(Y=dataset.y, Ut=dataset.Ut, eigenvals=dataset.evals, Z=dataset.fixed, A_cov=A_cov,
-                               device=input_config.device, dtype=torch.float32)
+                               device=input_config.device, dtype=dtype)
         solver.fit_null_model(full_wald=True)
         metrics = solver.get_metrics()
     timer.log("Have null model.")

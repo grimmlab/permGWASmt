@@ -2,6 +2,14 @@ import torch
 import gc
 import logging
 
+def get_dtype(dtype: str):
+    if dtype == "float32":
+        return torch.float32
+    elif dtype == "float64":
+        return torch.float64
+    else:
+        raise RuntimeError(f"Unsupported dtype {dtype}")
+
 def get_trait_design(trait_design="identity"):
     if trait_design == "identity":
         return torch.eye(2)
@@ -71,5 +79,3 @@ def robust_gwas_executor(func, *args, **kwargs):
 
         # 3. Recursive retry
         return robust_gwas_executor(func, *args, **kwargs)
-
-

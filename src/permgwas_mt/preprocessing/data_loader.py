@@ -40,6 +40,8 @@ class Dataset:
         del K
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
+        elif self.device.type == 'mps':
+            torch.mps.empty_cache()
 
 
     def _match_samples(self, geno_ids, phenotype_file, traits, kinship_file=None, kinship_type=None,
@@ -98,10 +100,11 @@ class Dataset:
 
     def _perform_unified_setup(self, maf_threshold, kinship_file=None, kinship_type=None):
         """Get SNP filters and meta data and kinship matrix"""
+        dtype = torch.float32 if self.device.type == "mps" else torch.float64
         if kinship_file is not None:
             K = self._load_kinship_matrix(kinship_file, kinship_type)
         else:
-            K = torch.zeros((self.n_samples, self.n_samples), device=self.device, dtype=torch.float64)
+            K = torch.zeros((self.n_samples, self.n_samples), device=self.device, dtype=dtype)
 
         valid_idx, chrs, poss, mafs, total_snps = [], [], [], [], 0
 
@@ -123,13 +126,15 @@ class Dataset:
                 snps = torch.from_numpy(snps[:, mask]).to(device=self.device, dtype=self.dtype)
                 snps -= snps.mean(0)
                 snps /= snps.std(0).clamp(min=1e-6)
-                snps = snps.to(torch.float64)
+                snps = snps.to(dtype=dtype)
                 K = torch.addmm(K, snps, snps.t())
                 total_snps += snps.shape[1]
 
                 del snps
                 if self.device.type == 'cuda':
                     torch.cuda.empty_cache()
+                elif self.device.type == 'mps':
+                    torch.mps.empty_cache()
 
         if kinship_file is None:
             K /= total_snps
@@ -158,14 +163,17 @@ class Dataset:
             K = df.loc[self.sample_ids, self.sample_ids].apply(pd.to_numeric, errors='coerce').values
         else:
             raise ValueError("Unknown kinship type")
-        return torch.from_numpy(K).to(dtype=torch.float64, device=self.device)
+        dtype = torch.float32 if self.device == "mps" else torch.float64
+        return torch.from_numpy(K).to(dtype=dtype, device=self.device)
 
     def _spectral_decomposition(self, K):
         """
             Applies a diagonal nudge and performs spectral decomposition.
             """
         # Gower-style Centering
-        K = K.to(dtype=torch.float64, device=self.device)
+        device = torch.device("cpu") if self.device.type == "mps" else self.device
+        K = K.to(device=device)
+        K = K.to(dtype=torch.float64)
         row_means = K.mean(dim=0, keepdim=True)
         col_means = K.mean(dim=1, keepdim=True)
         grand_mean = K.mean()

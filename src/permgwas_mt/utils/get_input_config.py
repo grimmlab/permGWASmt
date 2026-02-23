@@ -28,6 +28,7 @@ class InputConfig:
     batch_size: int = 10000
     perm_batch_size: int = 1000
     device: str = "cpu"
+    dtype: str = "float32"
     master_seed: int | None = None
     time_report: bool = False
 
@@ -151,7 +152,9 @@ class InputConfig:
         if self.no_scan:
             object.__setattr__(self, "hypothesis_type", None)
         else:
-            if self.hypothesis_type not in ("any", "common", "specific", "all"):
+            if self.hypothesis_type is None:
+                object.__setattr__(self, "hypothesis_type", "any")
+            elif self.hypothesis_type not in ("any", "common", "specific", "all"):
                 raise ValueError(f"Unknown hypothesis test type: {self.hypothesis_type}")
 
         if self.trait_design != "identity":
@@ -166,8 +169,18 @@ class InputConfig:
         if self.perm_batch_size is None:
             object.__setattr__(self, "perm_batch_size", 1000)
 
+        if self.n_permutations is None:
+            object.__setattr__(self, "n_permutations", 0)
+
+        # TODO sanity checks for device and dtype -- mps only 32
         if self.device is None:
             object.__setattr__(self, "device", "cpu")
+
+        if self.dtype is None:
+            object.__setattr__(self, "dtype", "float32")
+
+        if self.maf_threshold is None:
+            object.__setattr__(self, "maf_threshold", 0)
 
 
     def _validate_phenotypes(self):
@@ -261,6 +274,12 @@ class InputConfig:
                 )
             # normalized device string
             object.__setattr__(self, "device", f"cuda:{idx}")
+        elif device == "mps":
+            if torch.backends.mps.is_available():
+                object.__setattr__(self, "device", "mps")
+            else:
+                print("WARNING: MPS not available, using CPU instead.")
+                object.__setattr__(self, "device", "cpu")
         else:
             raise ValueError(f"Unknown device option: {device}. Must be 'cpu' or 'cuda:N'")
 

@@ -5,15 +5,16 @@ traits:
   - "pheno1"
   - "pheno2"
 kinship_file:
-covariate_file: "./data/cov_matrix.csv"
+covariate_file:
 covariate_list:
 no_scan: True
-hypothesis_type: "any"
-maf_threshold: 0
+hypothesis_type:
+maf_threshold:
 n_permutations: 0
 outdir:
 outfile:
-device: "cpu"
+device: 
+dtype:
 batch_size:
 perm_batch_size:
 master_seed:
