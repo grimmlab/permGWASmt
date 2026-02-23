@@ -1,0 +1,8 @@
+pandas>=2.0.0
+numpy>=1.24.0
+h5py>=3.8.0
+pandas-plink>=2.3.2
+scipy>=1.17.0
+pyyaml>=6.0.3
+matplotlib>=3.10.8
+seaborn>=0.13.2
