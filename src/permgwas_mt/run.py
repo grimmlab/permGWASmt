@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default=None,
                         help="Device to run on (cpu or cuda:N), (default: cpu)")
     parser.add_argument("--dtype", type=str, default=None,
-                        help="Optional dtype to use for computations (float32 or float64), (default: float32)")
+                        help="Optional dtype to use for computations (float32 or float64), (default: float64)")
     parser.add_argument("--no_scan", action="store_true", default=None,
                         help="Only determine and save variance components without running a full GWAS scan.")
     parser.add_argument('-batch', '--batch_size', type=int, default=None,

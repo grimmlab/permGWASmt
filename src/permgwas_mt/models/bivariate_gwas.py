@@ -1,4 +1,5 @@
 import torch
+from torch.nn.functional import softplus
 import gc
 from tqdm import tqdm
 import scipy.stats as stats
@@ -82,15 +83,23 @@ class BivariateGWAS:
             rho = torch.clamp(rho, -0.9, 0.9)  # Keep it stable
 
             #Initialize Cholesky parameters
-            self.l_G[0], self.l_R[0] = torch.sqrt(s2g1), torch.sqrt(s2e1)
             # Covariance (l1): rho * sqrt(var1 * var2)
             self.l_G[1] = rho * torch.sqrt(s2g2)
             self.l_R[1] = rho * torch.sqrt(s2e2)
 
+            # Target Cholesky diagonals (ensure they are strictly positive)
             # For Trait 2 (l2): sqrt(var2 - l1^2) to satisfy L*L.T = Var
             # We use a small epsilon to ensure the square root is valid
-            self.l_G[2] = torch.sqrt(torch.clamp(s2g2 - self.l_G[1] ** 2, min=1e-6))
-            self.l_R[2] = torch.sqrt(torch.clamp(s2e2 - self.l_R[1] ** 2, min=1e-6))
+            target_g0 = torch.sqrt(torch.clamp(s2g1, min=1e-6))
+            target_r0 = torch.sqrt(torch.clamp(s2e1, min=1e-6))
+            target_g2 = torch.sqrt(torch.clamp(s2g2 - self.l_G[1] ** 2, min=1e-6))
+            target_r2 = torch.sqrt(torch.clamp(s2e2 - self.l_R[1] ** 2, min=1e-6))
+
+            # Map target diagonals using inverse softplus: x = log(exp(y) - 1)
+            self.l_G[0] = torch.log(torch.expm1(target_g0))
+            self.l_R[0] = torch.log(torch.expm1(target_r0))
+            self.l_G[2] = torch.log(torch.expm1(target_g2))
+            self.l_R[2] = torch.log(torch.expm1(target_r2))
 
     def _univariate_reml(self, trait_idx, tol=1e-5, max_iter=100):
         """
@@ -161,8 +170,11 @@ class BivariateGWAS:
         :param l: 3 dim vector containing elements of L
         :return: LL^T
         """
-        L = torch.zeros((2,2), device=l.device)
-        L[0,0], L[1,0], L[1,1] = l[0], l[1], l[2]
+        L = torch.zeros((2,2), device=l.device, dtype=l.dtype)
+        # Constrain diagonals to be strictly positive
+        L[0,0] = torch.nn.functional.softplus(l[0])
+        L[1,0] = l[1]
+        L[1,1] = torch.nn.functional.softplus(l[2])
         return L @ L.t()
 
     def reml_loss(self):
@@ -176,7 +188,7 @@ class BivariateGWAS:
 
         # V_i = lambda_i*G + R
         V_batch = self.eigenvals.view(self.n_samples, 1, 1) * G + R
-        V_inv = torch.inverse(V_batch)
+        V_inv = torch.linalg.inv(V_batch)
 
         # X^T * V^-1 * X and X^T * V^-1 * y
         XV = torch.bmm(self.X_batch.transpose(1,2), V_inv)  # (n,c,2)
@@ -393,7 +405,7 @@ class BivariateGWAS:
         if A_null is not None:
             gVres_null = torch.matmul(gVres, A_null)
             gVg_null = torch.matmul(A_null.t(), torch.matmul(gVg, A_null))
-            chi_null = torch.matmul(torch.matmul(gVres_null.unsqueeze(-2), torch.inverse(gVg_null)),
+            chi_null = torch.matmul(torch.matmul(gVres_null.unsqueeze(-2), torch.linalg.inv(gVg_null)),
                                     gVres_null.unsqueeze(-1)).squeeze(-1).squeeze(-1)
             del gVres_null, gVg_null
         else:
@@ -402,7 +414,7 @@ class BivariateGWAS:
         # compute chi square for alternative
         gVres = torch.matmul(gVres, A_alt)
         gVg = torch.matmul(A_alt.t(), torch.matmul(gVg, A_alt))
-        chi_alt = torch.matmul(torch.matmul(gVres.unsqueeze(-2), torch.inverse(gVg)),
+        chi_alt = torch.matmul(torch.matmul(gVres.unsqueeze(-2), torch.linalg.inv(gVg)),
                                gVres.unsqueeze(-1)).squeeze(-1).squeeze(-1)
         del gVres, gVg
 
