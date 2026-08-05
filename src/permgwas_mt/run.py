@@ -65,7 +65,6 @@ def parse_args():
     return vars(args)
 
 def main():
-    print('Start parsing arguments')
     cli_args = parse_args()
     config_path = cli_args.pop("config", None)
     try:

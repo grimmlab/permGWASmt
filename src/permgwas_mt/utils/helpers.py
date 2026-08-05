@@ -2,6 +2,31 @@ import torch
 import gc
 import logging
 
+from permgwas_mt.utils.get_input_config import InputConfig
+
+
+def print_setup(input_config: InputConfig):
+    print("\n" + "=" * 50)
+    print("|" + " " * 19 + "permGWASmt"+ " " * 19 + "|")
+    print("=" * 50)
+    print(f"Run multi-trait GWAS analysis on device {input_config.device}")
+    print(f"- Genotype file: {input_config.genotype_file.name}")
+    print(f"- Phenotype file: {input_config.phenotype_file.name}")
+    print(f"- Traits: {input_config.traits[0]}, {input_config.traits[1]}")
+    if input_config.covariate_file is not None:
+        print(f"- Covariate file: {input_config.covariate_file.name}")
+        print(f"- Covariates: {','.join(input_config.covariate_list)}")
+    if input_config.kinship_file is not None:
+        print(f"- Kinship file: {input_config.kinship_file.name}")
+    if input_config.maf_threshold > 0:
+        print(f"- Minor allele frequency filtering: {input_config.maf_threshold}")
+    if not input_config.no_scan:
+        print(f"- Test hypothesis: {input_config.hypothesis_type}")
+    if input_config.n_permutations > 0:
+        print(f"- Number of permutations: {input_config.n_permutations}")
+    print("=" * 50 + "\n\nStart loading data")
+
+
 def get_dtype(dtype: str):
     if dtype == "float32":
         return torch.float32
@@ -41,6 +66,26 @@ def get_bivariate_hypotheses(test_type="any"):
         return A_any, A_common
     else:
         raise ValueError(f"Unknown test type: {test_type}")
+
+def backtransform_effects(beta_alt, se_alt, A_alt, y_std):
+    """
+    Transform effect sizes and SEs from GWAS scan back to original scale
+
+    :param beta_alt: (n_snps, k) - beta_alt from gwas scan
+    :param se_alt:   (n_snps, k) - SEs from gwas scan
+    :param A_alt:    (2, k) - trait design matrix
+    :param y_std:    (2,) - standard deviation of traits
+    :return: beta_original (n_snps, 2), se_original (n_snps, 2)
+    """
+    A_alt = A_alt.to(dtype=beta_alt.dtype)
+    beta_std_full = beta_alt @ A_alt.t()              # (n_snps, 2)
+    var_alt = se_alt.pow(2)                            # (n_snps, k)
+    var_std_full = var_alt @ (A_alt.t() ** 2)           # (n_snps, 2)
+
+    beta_original = beta_std_full * y_std.unsqueeze(0)               # (n_snps, 2)
+    se_original = torch.sqrt(var_std_full) * y_std.unsqueeze(0)      # (n_snps, 2)
+
+    return beta_original, se_original
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

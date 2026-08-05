@@ -177,7 +177,7 @@ class InputConfig:
             object.__setattr__(self, "device", "cpu")
 
         if self.dtype is None:
-            object.__setattr__(self, "dtype", "float32")
+            object.__setattr__(self, "dtype", "float64")
 
         if self.maf_threshold is None:
             object.__setattr__(self, "maf_threshold", 0)
@@ -233,7 +233,8 @@ class InputConfig:
 
     def _prepare_output(self):
         # prepare output directory
-        outdir = self.outdir or Path.cwd() / "results"
+        tmp_dir = self.genotype_file.stem + "-" + self.phenotype_file.stem
+        outdir = self.outdir or Path.cwd() / "results" / tmp_dir
         outdir.mkdir(parents=True, exist_ok=True)
         object.__setattr__(self, "outdir", outdir)
 
