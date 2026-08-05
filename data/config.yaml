@@ -2,13 +2,13 @@
 genotype_file: "./data/x_matrix.h5"
 phenotype_file: "./data/y_matrix.csv"
 traits:
-  - "pheno1"
-  - "pheno2"
+  - "trait1"
+  - "trait2"
 kinship_file:
-covariate_file:
+covariate_file: "./data/cov_matrix.csv"
 covariate_list:
 no_scan: False
-hypothesis_type: "any"
+hypothesis_type: "all"
 maf_threshold: 0
 n_permutations: 0
 outdir:

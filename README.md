@@ -36,8 +36,8 @@ permGWASmt accepts `YAML` config files that contain all flags and options:
 genotype_file: "./data/x_matrix.h5"
 phenotype_file: "./data/y_matrix.csv"
 traits:
-  - "pheno1"
-  - "pheno2"
+  - "trait1"
+  - "trait2"
 ```
 
 For permGWASmt to run, you need to provide the paths to your **genotype** and **phenotype files** 
