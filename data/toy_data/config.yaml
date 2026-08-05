@@ -1,14 +1,14 @@
 ---
-genotype_file: "./data/x_matrix.h5"
-phenotype_file: "./data/y_matrix.csv"
+genotype_file: "./data/toy_data/x_matrix.h5"
+phenotype_file: "./data/toy_data/y_matrix.csv"
 traits:
   - "trait1"
   - "trait2"
 kinship_file:
-covariate_file: "./data/cov_matrix.csv"
+covariate_file:
 covariate_list:
 no_scan: False
-hypothesis_type: "all"
+hypothesis_type: "any"
 maf_threshold: 0
 n_permutations: 0
 outdir:
