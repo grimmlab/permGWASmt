@@ -9,7 +9,7 @@ from permgwas_mt.preprocessing.read_gfile import H5Reader, CSVReader
 
 
 class Dataset:
-    def __init__(self, input_config: InputConfig, dtype=torch.float32):
+    def __init__(self, input_config: InputConfig, dtype=torch.float64):
         self.device = torch.device(input_config.device)
         self.dtype = dtype
         self.batch_size = input_config.batch_size
@@ -27,6 +27,8 @@ class Dataset:
                                                                             covariate_list=input_config.covariate_list)
         self.n_samples = len(self.sample_ids)
         self.trait_corr = torch.corrcoef(self.y.t())[0, 1].item()
+        # standardize y
+        self.y_std = self._standardize_y()
 
         # filter SNPs and get kinship
         self.valid_snp_indices, K, self.metadata = self._perform_unified_setup(maf_threshold=input_config.maf_threshold,
@@ -190,6 +192,11 @@ class Dataset:
         # Eigenvalue Clamp to force them to be positive
         evals = torch.clamp(evals, min=1e-7)
         return evals.to(self.dtype), U.t().to(dtype=self.dtype)
+
+    def _standardize_y(self):
+        y_std = self.y.std(dim=0)
+        self.y = self.y / y_std
+        return y_std
 
     def get_genotype_stream(self):
         """Pass 2: The actual GWAS scan."""

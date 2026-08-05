@@ -3,14 +3,14 @@ import pandas as pd
 from datetime import datetime
 
 
-def save_p_values(filepath, f_stats, p_values, betas, ses, chromosomes, positions, maf):
+def save_p_values(filepath, test_stats, p_values, betas, ses, chromosomes, positions, maf):
     n_effects = betas.shape[1] if betas.ndim > 1 else 1
 
     data = {
         'CHR': chromosomes,
         'POS': positions,
         'MAF': maf,
-        'F_STAT': f_stats,
+        'TEST_STAT': test_stats,
         'P-VAL': p_values
     }
 
@@ -29,7 +29,7 @@ def save_p_values(filepath, f_stats, p_values, betas, ses, chromosomes, position
     results_df = results_df.sort_values(['CHR', 'POS'])
 
     results_df.to_csv(filepath, index=False)
-    print(f"Saved {f_stats.shape[0]} SNPs with {n_effects} effect column(s) to {filepath}")
+    print(f"\nSaved {test_stats.shape[0]} SNPs with {n_effects} effect column(s) to {filepath}")
     return results_df
 
 
@@ -38,12 +38,13 @@ def save_max_test_stats(filepath, max_test_stats, min_p_vals, seeds):
                        'MAX_F_STAT': max_test_stats,
                        'MIN_P_VAL': min_p_vals,})
     df.to_csv(filepath, index=False)
-    print(f"Saved min p-values for {max_test_stats.shape[0]} permutations to {filepath}")
+    print(f"\nSaved min p-values for {max_test_stats.shape[0]} permutations to {filepath}")
 
 
-def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples, n_snps, maf_threshold, l_G, l_R,
-                      metrics, trait_design, trait_corr, n_perm, master_seed, hypothesis_type=None, perm_thres=None,
-                      kinship_file=None, covariate_file=None, covariate_list=None):
+def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples, n_snps, maf_threshold,
+                      metrics, final_loss, trait_design, trait_corr, n_perm, master_seed,
+                      hypothesis_type=None, genomic_control=None, perm_thres=None, kinship_file=None,
+                      covariate_file=None, covariate_list=None):
 
     #Saves a comprehensive summary of the GWAS run including
     #model parameters, hardware settings, and significance thresholds.
@@ -65,9 +66,10 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
                     "n_samples": n_samples,
                     "n_snps": n_snps,
                     "trait_correlation": trait_corr,
-                    "Cholesky_factors": {
-                        "l_G": l_G,
-                        "l_R": l_R,
+                    "optimized parameters": {
+                        "genetic covariance G": metrics["G"],
+                        "residual covariance R": metrics["R"],
+                        "final REML loss": final_loss,
                     },
                     "heritability": {
                         "trait_1": metrics["h2_1"],
@@ -78,6 +80,8 @@ def save_gwas_summary(filepath, genotype_file, phenotype_file, traits, n_samples
     })
     if hypothesis_type is not None:
         summary["hypothesis_type"] = hypothesis_type
+        for key in genomic_control:
+            summary[f"lambda_gc_{key}"] = genomic_control[key]
         summary["Bonferroni_threshold_05"] = 0.05/n_snps
         if len(perm_thres) > 0:
             summary["n_permutations"] = n_perm
