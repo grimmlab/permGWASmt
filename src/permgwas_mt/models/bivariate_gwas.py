@@ -13,7 +13,7 @@ class BivariateGWAS:
     RHO_MAX = 0.995  # keeps rho_r away from +-1
 
     def __init__(self, Y: torch.Tensor, Ut: torch.Tensor, eigenvals: torch.Tensor, Z: torch.Tensor, A_cov: torch.Tensor,
-                 device: str, dtype=torch.float32):
+                 device: str, dtype=torch.float64):
         self.device = torch.device(device)
         self.dtype = dtype
         self.n_samples = Y.shape[0]
@@ -357,24 +357,8 @@ class BivariateGWAS:
                 "theta": self.theta.item(),
             }
 
-    def _compute_df(self, A_alt, A_null=None):
-        """
-        compute degrees of freedom
-        :param A_alt: trait design matrix of alternative model (2,k)
-        :param A_null: trait design matrix of null model (2,j) or None
-        :return: df1
-        """
-
-        if A_null is not None:
-            Q_full, _ = torch.linalg.qr(torch.cat([A_null, A_alt], dim=1))
-            P = Q_full[:, A_null.shape[1]:A_null.shape[1] + (A_alt.shape[1] - A_null.shape[1])]
-        else:
-            P, _ = torch.linalg.qr(A_alt)
-
-        return P.shape[1]
-
     @staticmethod
-    def _apply_genomic_control(test_stats:np.array, df1:int, lambda_gc:float =None, warn_threshold:float =0.1):
+    def _apply_genomic_control(test_stats:np.array, df1, lambda_gc:float =None, warn_threshold:float =0.1):
         """
         Correct test statistics by genomic control value lambda_gc, and compute p-values
 
@@ -389,7 +373,7 @@ class BivariateGWAS:
                 print(f"WARNING: lambda_GC={lambda_gc:.3f}. Applied genomic control.")
         lambda_gc_applied = max(lambda_gc, 1.0)
         corrected_stats = test_stats / lambda_gc_applied
-        p_vals = stats.chi2.sf(corrected_stats, df1)
+        p_vals = stats.chi2.sf(corrected_stats.astype(np.float64), df1)
         return p_vals, lambda_gc
 
     def _gwas_scan(self, g_batch: torch.Tensor, A_alt: torch.Tensor, A_null: torch.Tensor = None):
@@ -410,9 +394,9 @@ class BivariateGWAS:
         gVg = torch.einsum('ik,nk,jk->nij', self.Phi, gVg, self.Phi)  # (n_snps,2,2)
 
         # correct for full Wald test
-        gXV = torch.mm(g_batch.t(), self.XV_null).reshape(-1, self.n_fixed, 2)  # (n_snps,c,2)
-        gVg -= torch.matmul(torch.matmul(gXV.transpose(1, 2), self.XVX_null), gXV)
-        del gXV
+        XVg = torch.mm(g_batch.t(), self.XV_null).reshape(-1, self.n_fixed, 2)  # (n_snps,c,2)
+        gVg -= torch.matmul(torch.matmul(XVg.transpose(1, 2), self.XVX_null), XVg)
+        del XVg
         del g_batch
 
         # project to null space and compute Wald Chi-square: (gVres)^T * (gVg)^-1 * gVres
@@ -476,11 +460,11 @@ class BivariateGWAS:
             A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
         else:
             A_alt = A_alt.to(device=self.device, dtype=self.dtype)
+        df1 = float(A_alt.shape[1])
         if A_null is not None:
             A_null = A_null.to(device=self.device, dtype=self.dtype)
+            df1 -= A_null.shape[1]
         all_stats, all_betas, all_se = [], [], []
-
-        df1 = self._compute_df(A_alt=A_alt, A_null=A_null)
 
         # check if genotypes is tensor or generator
         is_tensor, iterable, n_batches = self._check_genotypes(genotype_data, n_snps, batch_size)
@@ -542,10 +526,10 @@ class BivariateGWAS:
         #                 self.V_inv_null).reshape(n_perm, n_snps, 2, 2)  # (p,m,2,2)
 
         # Confounding Correction
-        gXV = torch.matmul(g_perm.transpose(1, 2),
+        XVg = torch.matmul(g_perm.transpose(1, 2),
                            self.XV_null).reshape(n_perm, n_snps, -1, 2)  # (p,m,c,2)
-        gVg -= torch.matmul(gXV.transpose(-2, -1), torch.matmul(self.XVX_null, gXV))  # (p,m,2,2)
-        del gXV
+        gVg -= torch.matmul(XVg.transpose(-2, -1), torch.matmul(self.XVX_null, XVg))  # (p,m,2,2)
+        del XVg
         del g_perm
 
         # compute chi squared for specific null
@@ -584,9 +568,10 @@ class BivariateGWAS:
             A_alt = torch.eye(2, device=self.device, dtype=self.dtype)
         else:
             A_alt = A_alt.to(device=self.device, dtype=self.dtype)
+        df1 = float(A_alt.shape[1])
         if A_null is not None:
             A_null = A_null.to(device=self.device, dtype=self.dtype)
-        df1 = self._compute_df(A_alt=A_alt, A_null=A_null)
+            df1 -= A_null.shape[1]
 
         # get list of seeds for permutations
         rng = np.random.default_rng(master_seed)
