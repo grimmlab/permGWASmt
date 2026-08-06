@@ -33,8 +33,8 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)/src
 permGWASmt accepts `YAML` config files that contain all flags and options:
 ```YAML
 ---
-genotype_file: "./data/x_matrix.h5"
-phenotype_file: "./data/y_matrix.csv"
+genotype_file: "./data/toy_data/x_matrix.h5"
+phenotype_file: "./data/toy_data/y_matrix.csv"
 traits:
   - "trait1"
   - "trait2"

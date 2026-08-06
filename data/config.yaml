@@ -8,9 +8,9 @@ kinship_file:
 covariate_file:
 covariate_list:
 no_scan: False
-hypothesis_type: "any"
+hypothesis_type: "common"
 maf_threshold: 0
-n_permutations: 0
+n_permutations: 100
 outdir:
 outfile:
 device: "cpu"
