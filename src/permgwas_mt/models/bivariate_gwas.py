@@ -14,13 +14,14 @@ class BivariateGWAS:
 
     def __init__(self, Y: torch.Tensor, Ut: torch.Tensor, eigenvals: torch.Tensor, Z: torch.Tensor, A_cov: torch.Tensor,
                  device: str, dtype=torch.float64):
-        self.device = torch.device(device)
+        self.device = torch.device(device)  # only used for gwas and permutation scan
         self.dtype = dtype
         self.n_samples = Y.shape[0]
 
         # eigenvalues and transposed vectors from kinship spectral decomposition
         # transform y and fixed effects: y' = U^Ty, X' = U^TX
-        self.eigenvals = eigenvals.to(device=self.device, dtype=self.dtype)
+        # and put on cpu for null model fit
+        self.eigenvals = eigenvals.to(dtype=self.dtype)
         self.Ut = Ut.to(device=self.device, dtype=self.dtype)
         self.y = self._transform_phenotype(Y=Y.to(device=self.device, dtype=self.dtype))
         self.X_batch, self.n_fixed = self._transform_covariates(Z=Z.to(device=self.device, dtype=self.dtype),
@@ -30,7 +31,6 @@ class BivariateGWAS:
         self.l_D = None
         self.theta = None
         self.eps_var = None  # floor of residual variance
-        self._initialize_params()
 
         # initialize remaining variables
         self.beta_null = None
@@ -40,9 +40,8 @@ class BivariateGWAS:
         self.XVX_null = None  # (c,c)
         self.Vres = None  # (n,2)
 
-        self._clear_vram()
 
-    def _transform_phenotype(self, Y: torch.Tensor):
+    def _transform_phenotype(self, Y: torch.Tensor) -> torch.Tensor:
         """
         Transform phenotype matrix Y with Ut and reshape (n,2,1)
 
@@ -52,7 +51,7 @@ class BivariateGWAS:
         y = torch.mm(self.Ut, Y)
         return y.unsqueeze(-1)
 
-    def _transform_covariates(self, Z: torch.Tensor, A_cov: torch.Tensor):
+    def _transform_covariates(self, Z: torch.Tensor, A_cov: torch.Tensor) -> (torch.Tensor, torch.Tensor):
         """
         Transform covariates with U^T and compute Kronecker structure
 
@@ -71,6 +70,29 @@ class BivariateGWAS:
         X_batch = X_expanded.reshape(self.n_samples, 2, -1)
         return X_batch, X_batch.shape[2]
 
+    def fit(self, **fit_kwargs):
+        """
+        initialize all parameters and fit null model on CPU
+
+        :param fit_kwargs:
+        :return:
+        """
+        cpu_device = torch.device("cpu")
+        self.eigenvals = self.eigenvals.to(cpu_device)
+        self.X_batch = self.X_batch.to(cpu_device)
+        self.y = self.y.to(cpu_device)
+
+        self._initialize_params(device=cpu_device)
+        final_loss, _ = self.fit_null_model(**fit_kwargs)
+
+        self.Phi = self.Phi.to(self.device)
+        self.diag_null = self.diag_null.to(self.device)
+        self.Vres = self.Vres.to(self.device)
+        self.XV_null = self.XV_null.to(self.device)
+        self.XVX_null = self.XVX_null.to(self.device)
+
+        return final_loss
+
     @staticmethod
     def _inverse_softplus(z):
         """
@@ -79,7 +101,7 @@ class BivariateGWAS:
         """
         return z + torch.log1p(-torch.exp(-z))
 
-    def _initialize_params(self):
+    def _initialize_params(self, device=torch.device('cpu')):
         """
         Initialize parameters using univariate REML variances as a warm start (l_R, theta, l_D)
         """
@@ -93,7 +115,7 @@ class BivariateGWAS:
             # floor residual variance
             frac_floor = 1e-3  # make sure that h^2 < 1 - frac_floor
             self.eps_var = torch.stack([frac_floor * (s2g1 + s2e1), frac_floor * (s2g2 + s2e2),
-                                        ]).to(device=self.device, dtype=self.dtype)
+                                        ]).to(device=device, dtype=self.dtype)
 
             # phenotypic correlation of residuals y * 1/(evals + delta)
             res1 = self.y[:, 0, 0] * (1.0 / (self.eigenvals + s2e1 / s2g1))
@@ -123,7 +145,7 @@ class BivariateGWAS:
             x_r1 = self._inverse_softplus(r1 - self.eps_var[0])
             x_r2 = self._inverse_softplus(r2 - self.eps_var[1])
             x_rho_r = torch.atanh(rho_r / self.RHO_MAX)
-            self.l_R = torch.stack([x_r1, x_r2, x_rho_r]).to(device=self.device, dtype=self.dtype
+            self.l_R = torch.stack([x_r1, x_r2, x_rho_r]).to(device=device, dtype=self.dtype
                                                              ).clone().requires_grad_(True)
 
             # transform G_init with R basis: G' = C^-1 G C^-T
@@ -146,18 +168,8 @@ class BivariateGWAS:
             x_d1 = self._inverse_softplus(torch.clamp(d1, min=self.EPS_D * 1.01))
             x_d2 = self._inverse_softplus(torch.clamp(d2, min=self.EPS_D * 1.01))
 
-            self.l_D = torch.stack([x_d1, x_d2]).to(device=self.device, dtype=self.dtype).clone().requires_grad_(True)
-            self.theta = theta_init.to(device=self.device, dtype=self.dtype).clone().requires_grad_(True)
-
-    def _clear_vram(self):
-        """
-        Cleanup for PyTorch caching allocator
-        """
-        gc.collect()
-        if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
-        elif self.device.type == 'mps':
-            torch.mps.empty_cache()
+            self.l_D = torch.stack([x_d1, x_d2]).to(device=device, dtype=self.dtype).clone().requires_grad_(True)
+            self.theta = theta_init.to(device=device, dtype=self.dtype).clone().requires_grad_(True)
 
     def build_R_chol(self):
         """ build Cholesky decomp of residual covariance matrix"""
@@ -272,12 +284,12 @@ class BivariateGWAS:
                        configs=(('strong_wolfe', 2.0),
                                 ('strong_wolfe', 1.0),
                                 (None,           0.05)),
-                       max_iter=5000, max_rounds_single_fit=5, stable_rounds=2, loss_tol=1e-5):
+                       max_iter=5000, max_rounds_single_fit=5, stable_rounds=3, loss_tol=1e-6):
         """
         optimize REML loss for null model, optionally save intermediate results X^TV^-1 and (X^TV^-1X)^-1
         """
         l_R_init, theta_init, l_D_init = self.l_R.clone(), self.theta.clone(), self.l_D.clone()
-        best_loss, best_state = float('inf'), None
+        best_loss, best_state, best_config = float('inf'), None, None
 
         # try out different line_search and lr params to optimize l_R, l_D and theta
         for line_search, lr in configs:
@@ -294,6 +306,7 @@ class BivariateGWAS:
                     best_loss = final_loss
                     best_state = (self.l_R.detach().clone(), self.theta.detach().clone(),
                                   self.l_D.detach().clone())
+                    best_config = [line_search, lr]
 
         # finalize best result
         self.l_R = best_state[0].requires_grad_(True)
@@ -316,9 +329,7 @@ class BivariateGWAS:
         # compute X^T V^-1 = weighted_Xz_i^T Phi^T
         XV = torch.einsum('nkf,jk->nfj', weighted_Xz, Phi)  # (n,c,2)
         self.XV_null = XV.reshape(self.n_samples, -1)  # (n,c*2)
-
-        self._clear_vram()
-        return final_loss
+        return final_loss, best_config
 
     def get_variance_components(self, y_std=None):
         """
@@ -356,6 +367,31 @@ class BivariateGWAS:
                 "D_canonical": D.cpu().numpy(),
                 "theta": self.theta.item(),
             }
+
+    def _clear_vram(self):
+        """
+        Cleanup for PyTorch caching allocator
+        """
+        gc.collect()
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+        elif self.device.type == 'mps':
+            torch.mps.empty_cache()
+
+    @staticmethod
+    def _check_genotypes(genotype_data, n_snps, batch_size):
+        """
+        check if genotypes are tensor or generator, set up iterable batches
+        :return:
+        """
+        is_tensor = isinstance(genotype_data, torch.Tensor)
+        if is_tensor:
+            n_snps = genotype_data.shape[1]
+            iterable = range(0, n_snps, batch_size)
+        else:
+            iterable = genotype_data
+        n_batches = int(np.ceil(n_snps / batch_size))
+        return is_tensor, iterable, n_batches
 
     @staticmethod
     def _apply_genomic_control(test_stats:np.array, df1, lambda_gc:float =None, warn_threshold:float =0.1):
@@ -426,21 +462,6 @@ class BivariateGWAS:
 
         test_stat = torch.clamp(chi_alt - chi_null, min=0.0) if chi_null is not None else chi_alt
         return test_stat.cpu().numpy(), beta_alt.squeeze(-1).cpu().numpy(), se_alt.cpu().numpy()
-
-    @staticmethod
-    def _check_genotypes(genotype_data, n_snps, batch_size):
-        """
-        check if genotypes are tensor or generator, set up iterable batches
-        :return:
-        """
-        is_tensor = isinstance(genotype_data, torch.Tensor)
-        if is_tensor:
-            n_snps = genotype_data.shape[1]
-            iterable = range(0, n_snps, batch_size)
-        else:
-            iterable = genotype_data
-        n_batches = int(np.ceil(n_snps / batch_size))
-        return is_tensor, iterable, n_batches
 
     def run_full_gwas_scan(self, genotype_data, batch_size: int, n_snps: int, A_null: torch.Tensor = None,
                            A_alt: torch.Tensor = None):

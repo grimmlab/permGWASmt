@@ -30,7 +30,7 @@ def run(input_config:InputConfig):
         A_cov = helpers.get_trait_design(input_config.trait_design)
         solver = BivariateGWAS(Y=dataset.y, Ut=dataset.Ut, eigenvals=dataset.evals, Z=dataset.fixed, A_cov=A_cov,
                                device=input_config.device, dtype=dtype)
-        final_loss = solver.fit_null_model()
+        final_loss = solver.fit()
         metrics = solver.get_variance_components(y_std=dataset.y_std)
     timer.log("Have null model.")
 
