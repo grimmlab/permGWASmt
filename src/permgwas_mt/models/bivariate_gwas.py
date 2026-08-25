@@ -26,13 +26,13 @@ class BivariateGWAS:
         self.y = self._transform_phenotype(Y=Y.to(device=self.device, dtype=self.dtype))
         self.X_batch, self.n_fixed = self._transform_covariates(Z=Z.to(device=self.device, dtype=self.dtype),
                                                                 A_cov=A_cov.to(device=self.device, dtype=self.dtype))
-        # initialize covariance matrices
+        # parameters for null model fit
         self.l_R = None
         self.l_D = None
         self.theta = None
         self.eps_var = None  # floor of residual variance
 
-        # initialize remaining variables
+        # variables for GWAS scan
         self.beta_null = None
         self.Phi = None
         self.diag_null = None
@@ -69,29 +69,6 @@ class BivariateGWAS:
         # reshape to (n,2,k*c)
         X_batch = X_expanded.reshape(self.n_samples, 2, -1)
         return X_batch, X_batch.shape[2]
-
-    def fit(self, **fit_kwargs):
-        """
-        initialize all parameters and fit null model on CPU
-
-        :param fit_kwargs:
-        :return:
-        """
-        cpu_device = torch.device("cpu")
-        self.eigenvals = self.eigenvals.to(cpu_device)
-        self.X_batch = self.X_batch.to(cpu_device)
-        self.y = self.y.to(cpu_device)
-
-        self._initialize_params(device=cpu_device)
-        final_loss, _ = self.fit_null_model(**fit_kwargs)
-
-        self.Phi = self.Phi.to(self.device)
-        self.diag_null = self.diag_null.to(self.device)
-        self.Vres = self.Vres.to(self.device)
-        self.XV_null = self.XV_null.to(self.device)
-        self.XVX_null = self.XVX_null.to(self.device)
-
-        return final_loss
 
     @staticmethod
     def _inverse_softplus(z):
@@ -331,6 +308,29 @@ class BivariateGWAS:
         self.XV_null = XV.reshape(self.n_samples, -1)  # (n,c*2)
         return final_loss, best_config
 
+    def fit(self, **fit_kwargs):
+        """
+        initialize all parameters and fit null model on CPU
+
+        :param fit_kwargs:
+        :return:
+        """
+        cpu_device = torch.device("cpu")
+        self.eigenvals = self.eigenvals.to(cpu_device)
+        self.X_batch = self.X_batch.to(cpu_device)
+        self.y = self.y.to(cpu_device)
+
+        self._initialize_params(device=cpu_device)
+        final_loss, _ = self.fit_null_model(**fit_kwargs)
+
+        self.Phi = self.Phi.to(self.device)
+        self.diag_null = self.diag_null.to(self.device)
+        self.Vres = self.Vres.to(self.device)
+        self.XV_null = self.XV_null.to(self.device)
+        self.XVX_null = self.XVX_null.to(self.device)
+
+        return final_loss
+
     def get_variance_components(self, y_std=None):
         """
         Compute heritability, genetic and residual correlation
@@ -527,8 +527,8 @@ class BivariateGWAS:
         # Set predefined seeds and generate local batch indices
         idx_list = []
         for s in seeds:
-            torch.manual_seed(int(s))
-            idx_list.append(torch.randperm(self.n_samples, device=self.device))
+            gen = torch.Generator(device=self.device).manual_seed(int(s))
+            idx_list.append(torch.randperm(self.n_samples, device=self.device, generator=gen))
         idx_list = torch.stack(idx_list)
 
         # Get shuffled SNPs
