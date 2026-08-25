@@ -46,13 +46,14 @@ def run(input_config:InputConfig):
             with timed(timer, f"gwas scan ({test_type})", use_cuda=(device.type == "cuda")):
                 print(f"\nStart GWAS scan. Test {dataset.n_snps} SNPs for {test_type} effects.")
                 A_alt, A_null = helpers.get_bivariate_hypotheses(test_type)
-                test_stats, p_values, betas, ses, lambda_gc = helpers.robust_gwas_executor(solver.run_full_gwas_scan,
-                                                                         genotype_data=dataset.get_genotype_stream(),
-                                                                         n_snps=dataset.n_snps,
-                                                                         A_alt=A_alt,
-                                                                         A_null=A_null,
-                                                                         batch_size=input_config.batch_size,
-                                                                         )
+                test_stats, p_values, betas, ses, lambda_gc = helpers.robust_gwas_executor(
+                    solver.run_full_gwas_scan,
+                    lambda bs: dataset.get_genotype_stream(batch_size=bs),
+                    n_snps=dataset.n_snps,
+                    A_alt=A_alt,
+                    A_null=A_null,
+                    batch_size=input_config.batch_size,
+                )
                 beta_original, se_original = helpers.backtransform_effects(torch.from_numpy(betas),
                                                                            torch.from_numpy(ses), A_alt, dataset.y_std)
                 genomic_control[test_type] = lambda_gc
@@ -71,17 +72,18 @@ def run(input_config:InputConfig):
             if input_config.n_permutations > 0:
                 with timed(timer, f"permutations ({test_type})", use_cuda=(device.type == "cuda")):
                     print(f"\nCompute min p-values for {input_config.n_permutations} permutations.")
-                    max_stats, min_p, perm_seeds = helpers.robust_gwas_executor(solver.run_permutation_gwas,
-                                                                        genotype_data=dataset.get_genotype_stream(),
-                                                                        n_perms=input_config.n_permutations,
-                                                                        n_snps=dataset.n_snps,
-                                                                        master_seed=input_config.master_seed,
-                                                                        A_alt=A_alt,
-                                                                        A_null=A_null,
-                                                                        lambda_gc=lambda_gc,
-                                                                        batch_size=input_config.batch_size,
-                                                                        perm_batch_size=input_config.perm_batch_size,
-                                                                        )
+                    max_stats, min_p, perm_seeds = helpers.robust_gwas_executor(
+                        solver.run_permutation_gwas,
+                        lambda bs: dataset.get_genotype_stream(batch_size=bs),
+                        n_perms=input_config.n_permutations,
+                        n_snps=dataset.n_snps,
+                        master_seed=input_config.master_seed,
+                        A_alt=A_alt,
+                        A_null=A_null,
+                        lambda_gc=lambda_gc,
+                        batch_size=input_config.batch_size,
+                        perm_batch_size=input_config.perm_batch_size,
+                    )
                     perm_thres[test_type] = float(np.percentile(min_p, 5))
                 timer.log("Have min p-values.")
                 max_test_stat_file = input_config.resolve_output_file(ResultType.MAX_TEST_STATS, test_type)

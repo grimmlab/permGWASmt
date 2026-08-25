@@ -198,9 +198,9 @@ class Dataset:
         self.y = self.y / y_std
         return y_std
 
-    def get_genotype_stream(self):
+    def get_genotype_stream(self, batch_size=None):
         """Pass 2: The actual GWAS scan."""
-        return self.reader.stream_valid_batches(self.geno_index, self.valid_snp_indices, self.batch_size)
+        return self.reader.stream_valid_batches(self.geno_index, self.valid_snp_indices, batch_size or self.batch_size)
 
     @staticmethod
     def _get_reader(genotype_file, genotype_type):

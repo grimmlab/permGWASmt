@@ -167,7 +167,7 @@ class InputConfig:
             object.__setattr__(self, "batch_size", 10000)
 
         if self.perm_batch_size is None:
-            object.__setattr__(self, "perm_batch_size", 1000)
+            object.__setattr__(self, "perm_batch_size", 100)
 
         if self.n_permutations is None:
             object.__setattr__(self, "n_permutations", 0)
